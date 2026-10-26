@@ -1,4 +1,4 @@
-"""Regressions for the coverage-honesty and grading bugs found in review.
+"""Regressions for coverage-honesty and grading bugs.
 
 Each test below corresponds to a confirmed defect where the scanner told the
 reader something stronger than the evidence supported. They are grouped here,
