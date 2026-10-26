@@ -148,6 +148,24 @@ _EXT = {"stix2": ".stix2", "csv-domain-ip": ".csv", "domains-txt": ".txt",
 _MISP_KINDS = {"domain": TYPE_DOMAIN, "hostname": TYPE_DOMAIN, "ip-dst": TYPE_IP,
                "ip-src": TYPE_IP, "sha256": TYPE_SHA256, "url": "url"}
 
+# A malicious LINK on a shared public service (a URL shortener, a file or page
+# host) condemns that one link, not the service: Citizen Lab's Mexico sets list
+# dozens of bit.ly and tinyurl.com links, and reducing them to their host would
+# grade every ordinary bit.ly visit as contact with Pegasus infrastructure. Such
+# URLs are counted as not applicable instead (the scan has no per-link matching).
+_SHARED_LINK_HOSTS = frozenset("""
+bit.ly bitly.com j.mp tinyurl.com goo.gl t.co ow.ly is.gd v.gd buff.ly rebrand.ly
+cutt.ly shorturl.at tiny.cc lnkd.in t.ly rb.gy s.id
+google.com googleusercontent.com blogspot.com dropbox.com dropboxusercontent.com
+github.com githubusercontent.com pastebin.com mediafire.com mega.nz wetransfer.com
+facebook.com fb.com instagram.com twitter.com x.com t.me wa.me
+""".split())
+
+
+def _shared_link_host(host: str) -> bool:
+    host = (host or "").lower().rstrip(".")
+    return any(host == h or host.endswith("." + h) for h in _SHARED_LINK_HOSTS)
+
 
 # --- where the cache lives ----------------------------------------------------
 
@@ -201,7 +219,11 @@ def load_list(path: str, fmt: str, source: str, family: str) -> IocSet:
                     not_applicable[mtype or "?"] = not_applicable.get(mtype or "?", 0) + 1
                 elif kind == "url":
                     host = urllib.parse.urlsplit((row.get("value") or "").strip()).hostname
-                    add(host or "", TYPE_DOMAIN)
+                    if _shared_link_host(host or ""):
+                        reason = "link on a shared service (only that link was malicious)"
+                        not_applicable[reason] = not_applicable.get(reason, 0) + 1
+                    else:
+                        add(host or "", TYPE_DOMAIN)
                 else:
                     add(row.get("value", ""), kind)
         else:

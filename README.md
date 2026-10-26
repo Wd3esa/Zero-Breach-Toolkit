@@ -143,8 +143,8 @@ python -c "import hashlib; print(hashlib.sha256(open('dist/zero-breach-triage.py
 ```
 
 The size and SHA-256 published with each release are authoritative. At the time of writing
-the build is **786,969 bytes**, SHA-256
-`048fb82602d7714b38b815fb8cc78a9fdfe846ebd8e88f1b1583db7f3f60a255`. Two consecutive rebuilds
+the build is **788,207 bytes**, SHA-256
+`543a7538f106c6789e779c5320a5ee6bb75c03d3af3ad3b503cc5631a973ed39`. Two consecutive rebuilds
 produce that same file. A rebuild that matches tells you the published file contains
 this source and nothing else.
 
