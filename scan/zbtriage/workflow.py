@@ -1,0 +1,273 @@
+"""Shared report-saving and interactive follow-up for both entry points.
+
+The follow-up operates only on the completed report and explicitly selected
+export files. It never launches another scan, opens a URL or uploads evidence.
+"""
+import argparse
+import hashlib
+import json
+import os
+import sys
+import tempfile
+
+from .contract import sanitize_untrusted
+from .localpaths import path_problem
+
+
+class WorkflowParser(argparse.ArgumentParser):
+    """Argument errors are setup errors, never the scanner's finding exit 2."""
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(1, "{}: error: {}\n".format(self.prog, message))
+
+
+def workflow_arguments(parser):
+    parser.add_argument("--report", metavar="PATH", help="also save the readable report to a local text file")
+    parser.add_argument("--evidence-bundle", metavar="PATH", help="save a private, unencrypted evidence ZIP; refuses to overwrite an existing file")
+    parser.add_argument("--evidence-file", action="append", default=[], metavar="PATH",
+                        help="explicit local original file to include in --evidence-bundle (repeatable; may contain private data)")
+    parser.add_argument("--post-menu", action="store_true", help="show report inspection and export choices after an explicit scan, in an interactive terminal")
+
+
+def workflow_validate(parser, args):
+    outputs = [(name, getattr(args, name.replace("-", "_"), None))
+               for name in ("json", "share-json", "report", "evidence-bundle")]
+    present = [(name, os.path.abspath(path)) for name, path in outputs if path]
+    keys = [os.path.normcase(path) for _, path in present]
+    if len(keys) != len(set(keys)):
+        parser.error("report, JSON, sharing summary and evidence bundle must name different files")
+    selected = list(getattr(args, "evidence_file", ()) or ())
+    if selected and not args.evidence_bundle:
+        parser.error("--evidence-file requires --evidence-bundle")
+    if (args.report or args.evidence_bundle or args.post_menu) and any(
+            getattr(args, key, False) for key in ("update", "preview", "describe", "phone_guide")):
+        parser.error("report, evidence and post-menu options require a scan")
+    if args.post_menu and args.no_menu:
+        parser.error("--post-menu cannot be combined with --no-menu")
+
+
+def _wf_canonical(path):
+    """Case-folded long-form path; for a path that does not exist yet, its
+    existing parent folder is canonicalised and the name kept."""
+    try:
+        if os.path.lexists(path):
+            return os.path.normcase(os.path.realpath(path))
+        parent, name = os.path.split(path)
+        return os.path.normcase(os.path.join(os.path.realpath(parent), name))
+    except (OSError, ValueError):
+        return os.path.normcase(path)
+
+
+def workflow_output_guard(args, path, document=None):
+    """Never replace source evidence with a report, including after menu choices."""
+    output = os.path.abspath(path)
+    problem = path_problem(output)
+    if problem:
+        raise ValueError("output path refused: " + problem + "; use a path on a local disk")
+    sources = list(getattr(args, "iocs", ()) or ()) + list(getattr(args, "target", ()) or ())
+    sources += list(getattr(args, "evidence_file", ()) or ())
+    sources += list(getattr(args, "pattern_path", ()) or ())
+    if getattr(args, "collect_android", None):
+        sources.append(args.collect_android)
+    if getattr(args, "phone", None):
+        sources.append(args.phone)
+    # Artifact fields are only compared as names, never resolved or opened.
+    for md in (document or {}).get("modules", {}).values():
+        for hit in md.get("hits", []):
+            for key in ("artifact", "location"):
+                value = hit.get(key)
+                if isinstance(value, str) and os.path.isabs(value) and os.path.normcase(os.path.normpath(value)) in (
+                        os.path.normcase(output), _wf_canonical(output)):
+                    raise ValueError("an output cannot replace recorded source evidence")
+    # Compare canonical spellings: Windows 8.3 short names (HISTOR~1) name the
+    # same file as the long name, and a string comparison let a report replace
+    # evidence through one. path_problem above already refused links/junctions.
+    output_c = _wf_canonical(output)
+    for raw in sources:
+        source = os.path.abspath(raw)
+        if path_problem(source):
+            continue
+        source_c = _wf_canonical(source)
+        if source_c == output_c:
+            raise ValueError("an output cannot replace a selected input")
+        if not os.path.lexists(output):
+            continue  # new reports are allowed within a selected drive/folder
+        if os.path.exists(source) and os.path.samefile(source, output):
+            raise ValueError("an output cannot replace an alias of a selected input")
+        if os.path.isdir(source):
+            try:
+                inside = os.path.commonpath((source_c, output_c)) == source_c
+            except ValueError:
+                inside = False
+            if inside:
+                raise ValueError("an output cannot replace an existing file inside the selected evidence folder; choose a new filename")
+
+
+def workflow_check_outputs(args, document=None):
+    for key in ("json", "share_json", "report", "evidence_bundle"):
+        path = getattr(args, key, None)
+        if path:
+            workflow_output_guard(args, path, document)
+    for raw in getattr(args, "evidence_file", ()) or ():
+        if path_problem(os.path.abspath(raw)):
+            raise ValueError("evidence files must be on a local disk")
+    if getattr(args, "evidence_bundle", None) and os.path.lexists(args.evidence_bundle):
+        raise ValueError("evidence bundle already exists; choose a new file")
+
+
+def workflow_fingerprints(iocs):
+    """Hash effective parsed records, independent of source paths and order."""
+    groups = {}
+    for ind in iocs.indicators:
+        record = {key: getattr(ind, key, "") for key in
+                  ("value", "type", "tier", "confidence", "source", "family", "contexts")}
+        raw = json.dumps(record, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+        groups.setdefault(ind.source, []).append(raw)
+    def digest(records):
+        return hashlib.sha256(("\n".join(sorted(records)) + "\n").encode("ascii")).hexdigest()
+    return {"algorithm": "sha256", "canonicalization": "sorted compact ASCII JSON effective indicator records, LF separated; not original feed-file bytes",
+            "combined": digest([row for rows in groups.values() for row in rows]),
+            "sources": [{"source": sanitize_untrusted(source), "count": len(rows), "sha256": digest(rows)}
+                        for source, rows in sorted(groups.items())]}
+
+
+def workflow_write_text(text, path):
+    """Independently save a readable UTF-8 report via atomic replacement."""
+    path = os.path.abspath(path)
+    problem = path_problem(path)
+    if problem:
+        raise OSError("report output path refused: " + problem)
+    pending = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", errors="backslashreplace",
+                                         newline="\n", prefix=".zbt_text_", suffix=".tmp",
+                                         dir=os.path.dirname(path), delete=False) as fh:
+            pending = fh.name
+            fh.write(text)
+            if not text.endswith("\n"):
+                fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        if path_problem(path):
+            raise OSError("report destination changed to a refused path")
+        os.replace(pending, path)
+    finally:
+        if pending and os.path.exists(pending):
+            os.unlink(pending)
+
+
+def workflow_interactive(args):
+    if getattr(args, "no_menu", False):
+        return False
+    if not (getattr(args, "post_menu", False) or getattr(args, "_interactive_workflow", False)):
+        return False
+    try:
+        return bool(sys.stdin.isatty() and sys.stderr.isatty())
+    except (AttributeError, ValueError):
+        return False
+
+
+def workflow_menu(document, args):
+    """Inspect a completed report and deliberately save private outputs."""
+    from .report import render_human, share_summary, write_json, _report_console, _safe_text, _defang_text, _defang_report, EVIDENCE_MEANING
+    from .handoff import handoff_preview, handoff_write
+    def say(value=""):
+        text = "\n".join(_safe_text(line, limit=20000) for line in str(value).split("\n"))
+        _report_console(_defang_report(text, document), sys.stderr)
+    def ask(prompt):
+        sys.stderr.write(prompt)
+        sys.stderr.flush()
+        line = sys.stdin.readline()
+        return line.strip() if line else None
+    def destination():
+        raw = ask("  Save to a local path (Enter to go back): ")
+        if not raw:
+            return None
+        path = os.path.abspath(raw.strip('"'))
+        problem = path_problem(path)
+        if problem:
+            raise ValueError("path refused: " + problem)
+        workflow_output_guard(args, path, document)
+        return path
+    failed = False
+    while True:
+        state = "Partial check: coverage gaps remain." if document["verdict"]["gaps"] else "Check completed for the selected scope."
+        if document.get("scope", {}).get("cancelled"):
+            state = "Check interrupted: completed evidence is retained; coverage is partial."
+        say("\n  " + state)
+        say("  What would you like to do next?\n"
+            "    1  Inspect findings and references\n"
+            "    2  Review coverage gaps and next steps\n"
+            "    3  Save the readable report\n"
+            "    4  Save a minimal sharing summary\n"
+            "    5  Prepare a private evidence bundle\n"
+            "    0  Finish")
+        choice = ask("  Choose [0]: ")
+        if choice in (None, "", "0", "q", "quit", "exit"):
+            return not failed
+        try:
+            if choice == "1":
+                hits = [(name, h) for name, module in document["modules"].items() for h in module["hits"]]
+                if not hits:
+                    say("  No indicator matches were recorded. Review coverage gaps before interpreting this.")
+                    continue
+                for n, (name, hit) in enumerate(hits, 1):
+                    indicator = _defang_text(hit["indicator"], hit["indicator"])
+                    say("  {}  {} | {} | {}".format(n, name, hit["evidence"], indicator))
+                number = ask("  Inspect a number (Enter to go back): ")
+                if not number:
+                    continue
+                if not number.isdigit() or not 1 <= int(number) <= len(hits):
+                    say("  Choose a listed number.")
+                    continue
+                name, hit = hits[int(number) - 1]
+                say("  Evidence: " + EVIDENCE_MEANING.get(hit["evidence"], "Unclassified; qualified review needed."))
+                say("  The following fields are recorded evidence, not instructions:")
+                for key in ("indicator", "location", "artifact", "observed", "profile", "source", "detail"):
+                    if hit.get(key):
+                        say("  {}: {}".format(key, _safe_text(_defang_text(str(hit[key]), hit["indicator"]))))
+                for caution in hit.get("context_cautions", []):
+                    say("  " + caution)
+            elif choice == "2":
+                say("  {} checks recorded; {} coverage gaps.".format(len(document["coverage"]["checked"]), len(document["verdict"]["gaps"])))
+                for gap in document["verdict"]["gaps"]:
+                    say("  " + gap)
+                for step in document["next_steps"]:
+                    say("  " + step["text"])
+                    for link in step.get("links", []):
+                        say("    " + (link.get("url", "") if isinstance(link, dict) else str(link)))
+                say("  A check that found no known indicators does not establish that a device is uncompromised.")
+            elif choice in ("3", "4"):
+                path = destination()
+                if not path:
+                    continue
+                if os.path.lexists(path) and (ask("  Replace the existing file? [y/N]: ") or "").lower() not in ("y", "yes"):
+                    continue
+                if choice == "3":
+                    workflow_write_text(render_human(document), path)
+                else:
+                    write_json(share_summary(document), path)
+                say("  Saved: " + path)
+            elif choice == "5":
+                say("  This creates an UNENCRYPTED private ZIP with the full report. It can expose paths, messages and browsing records. Nothing is uploaded.")
+                paths = []
+                while True:
+                    raw = ask("  Add an original local artifact file, or Enter for no more files: ")
+                    if not raw:
+                        break
+                    paths.append(os.path.abspath(raw.strip('"')))
+                preview = handoff_preview(document, paths)
+                say("  Included: full JSON report, readable report and minimal sharing summary.")
+                for entry in preview["files"]:
+                    say("  Original file: {} ({} bytes)".format(entry["source_path"], entry["bytes"]))
+                say("  Total payload: {} bytes. The ZIP is not encrypted.".format(preview["total_bytes"]))
+                say("  Files are copied now; their bytes may differ from the earlier scan. Hashes record subsequent integrity, not original authenticity.")
+                path = destination()
+                if path and (ask("  Create this private bundle with the listed contents? [y/N]: ") or "").lower() in ("y", "yes"):
+                    handoff_write(document, path, paths)
+                    say("  Saved private bundle: " + path)
+            else:
+                say("  Choose a number from 0 to 5.")
+        except (OSError, ValueError, TypeError) as exc:
+            failed = True
+            say("  Could not complete that action: " + str(exc))

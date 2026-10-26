@@ -1,0 +1,2 @@
+# Optional acceleration / encrypted iPhone backup support; tested version.
+cryptography==46.0.5
