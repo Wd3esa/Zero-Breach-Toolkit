@@ -231,6 +231,8 @@ READER_SPECS = (
                         "ios:analytics": "supported analytics identifiers and literal references",
                         "ios:location-clients": "location client metadata",
                         "ios:preferences": "recorded Lockdown Mode preference and literal references",
+                        "ios:id-status-cache": "accounts looked up by iMessage and FaceTime",
+                        "ios:favicons": "page and icon addresses stored by Safari and Chromium browsers",
                         "ios:profiles": "profile configuration identifiers",
                         "ios:profile-events": "historical profile identifiers",
                         "ios:profile-settings": "literal references in device-management settings",

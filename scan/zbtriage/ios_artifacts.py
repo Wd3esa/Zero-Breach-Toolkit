@@ -166,6 +166,17 @@ def _ia_artifact_kind(domain, path, kind):
         return "location-clients"
     if mobile and base == ".GlobalPreferences.plist":
         return "preferences"
+    # iMessage/FaceTime lookups of other people's accounts (MVT: IDStatusCache).
+    # iOS 14.7 moved it from Preferences to IdentityServices.
+    if mobile and base in ("com.apple.identityservices.idstatuscache.plist", "idstatuscache.plist"):
+        return "id-status-cache"
+    # Pages whose icons the browser stored: Safari's Favicons.db and the
+    # Chromium "Favicons" database of Chrome, Edge and other iPhone browsers.
+    if base == "Favicons.db" and "favicons" in low:
+        return "favicons"
+    if base == "Favicons" and any(name in domain.lower() or name in low
+                                  for name in ("chrome", "edge", "brave", "opera", "chromium")):
+        return "favicons"
     if "configurationprofiles" in low and base.endswith((".plist", ".mobileconfig", ".stub")):
         # Installed profiles are stored as profile-<hash>.stub; install and
         # removal history is MCProfileEvents.plist. The folder's other plists
@@ -288,6 +299,7 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
             "webkit-statistics": ("ObservedDomains", ("registrableDomain",), ("lastSeen",),
                                   (("observed_domains", ("registrableDomain",), ("lastSeen",)),)),
             "url-cache": ("cfurl_cache_response", ("request_key",), ("time_stamp",)),
+            "favicons": ("page_url", ("url",), (), (("icon_mapping", ("page_url",), ()),)),
             "brave-sites": ("ZDOMAIN", ("ZURL",), ("ZVISITS",)),
             "whatsapp": ("ZWAMESSAGE", ("ZTEXT", "ZISFROMME"), ("ZMESSAGEDATE", "ZFROMJID")),
             "permissions": ("access", ("client", "service"), ("auth_value", "allowed", "last_modified")),
@@ -370,6 +382,20 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
                     # text_matches covers email indicators and domains inside the address.
                     text_matches(row[0], key, check, "participant " + str(row_id),
                                  "calendar participant address; the invitation's content is unverified")
+        if kind == "favicons":
+            # The icon's own address: icon_info (Safari) or favicons (Chromium).
+            con = source.open_database(*key, check)
+            try:
+                with query(con, "SELECT name FROM sqlite_master WHERE type='table' "
+                                "AND name IN ('icon_info', 'favicons')") as cur:
+                    icon_tables = [row[0] for row in cur.fetchall()]
+            finally:
+                con.close()
+            for table in icon_tables:
+                for row_id, row in sql_rows(key, check, table, ("url",), ()):
+                    text_matches(row[0], key, check, table + " " + str(row_id),
+                                 "icon address stored by the browser; the visit itself is unverified")
+                    r.checked += 1
         if actions_table:
             for row_id, row in sql_rows(key, check, "ZSHORTCUTACTIONS", ("ZDATA",), ("ZSHORTCUT",)):
                 try:
@@ -485,6 +511,26 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
                         typed(segment[1:], ("file-path",), key, check, name, detail, EV_DEVICE_LOG,
                               apple_time(stopped), stopped or "")
                 typed(name, ("app-id",), key, check, name, detail, EV_DEVICE_LOG, apple_time(stopped), stopped or "")
+        if kind == "id-status-cache" and isinstance(doc, dict):
+            # {service: {"mailto:..." | "tel:...": {"IDStatus": n, "LookupDate": t}}}
+            for service, entries in doc.items():
+                if not isinstance(entries, dict):
+                    if isinstance(entries, (int, float, str)):
+                        continue  # file metadata
+                    gap(check, "unsupported lookup cache service record")
+                    continue
+                for handle, info in entries.items():
+                    if not isinstance(handle, str) or ":" not in handle:
+                        gap(check, "unsupported lookup cache entry")
+                        continue
+                    recognized += 1
+                    stamp = info.get("LookupDate") if isinstance(info, dict) else None
+                    account = handle.split(":", 1)[1]
+                    typed(account, ("email",), key, check, str(service) + "/" + handle,
+                          "account looked up by this phone's iMessage or FaceTime; the lookup "
+                          "does not show who started the contact", EV_DEVICE_LOG,
+                          _ia_iso(stamp) if isinstance(stamp, datetime.datetime) else apple_time(stamp),
+                          str(stamp or ""))
         if kind == "profile-events" and isinstance(doc, dict) and isinstance(doc.get("ProfileEvents"), list):
             # [{profile identifier: {"operation": ..., "process": ..., "timestamp": ...}}]
             for n, event in enumerate(doc["ProfileEvents"]):
@@ -779,7 +825,7 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
             elif kind == "browser-connections":
                 connection_artifact(key, check)
             elif kind in ("analytics", "profiles", "profile-events", "profile-settings", "location-clients",
-                          "preferences", "app-metadata", "webkit-session"):
+                          "preferences", "app-metadata", "webkit-session", "id-status-cache"):
                 plist_artifact(key, kind, check)
             else:
                 sql_artifact(key, kind, check)

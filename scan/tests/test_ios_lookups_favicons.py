@@ -1,0 +1,76 @@
+"""iMessage/FaceTime account lookups (idstatuscache) and browser favicon stores
+in an iPhone backup, the two MVT iOS sources the reader had not covered."""
+import datetime
+import plistlib
+
+import pytest
+
+from zbtriage.context import ScanContext
+from zbtriage.iocs import IocSet, Indicator
+from zbtriage.modules import ios
+from test_followup_fixes import bundle  # noqa: F401
+from test_ios_upgrade import backup, db_bytes
+
+EMAIL = "operator.account@lookup.invalid"
+DOMAIN = "favicon-redirect.invalid"
+
+
+@pytest.fixture(params=("source", "bundle"))
+def reader(request, bundle):  # noqa: F811
+    return ios.run if request.param == "source" else bundle.run_ios
+
+
+def _ctx(root):
+    iocs = IocSet([Indicator(EMAIL, "fixture", "primary", "email", "fixture"),
+                   Indicator(DOMAIN, "fixture", "primary", "domain", "fixture")], "fixture", None)
+    return ScanContext(iocs, phone_path=str(root), ios_input="backup", emit=lambda _: None)
+
+
+def _gaps(result):
+    return {c.name: c.reason for c in result.checks if not c.ran}
+
+
+@pytest.mark.parametrize("path", ["Library/Preferences/com.apple.identityservices.idstatuscache.plist",
+                                  "Library/IdentityServices/idstatuscache.plist"])
+@pytest.mark.parametrize("stamp", [740000000.0, datetime.datetime(2024, 6, 13, 10, 0, 0)])
+def test_account_lookup_matches_an_email_indicator(tmp_path, reader, path, stamp):
+    doc = {"com.apple.madrid": {"mailto:" + EMAIL: {"IDStatus": 1, "LookupDate": stamp},
+                                "tel:+15550100": {"IDStatus": 2, "LookupDate": stamp}}}
+    root = tmp_path / "backup"
+    backup(root, [("HomeDomain", path, plistlib.dumps(doc))])
+    result = reader(_ctx(root))
+    hits = [h for h in result.hits if h.indicator == EMAIL]
+    assert hits and hits[0].evidence == "device-log" and hits[0].observed.startswith("202")
+    assert "ios:id-status-cache" not in _gaps(result)
+
+
+def test_unsupported_lookup_record_is_a_gap(tmp_path, reader):
+    doc = {"com.apple.madrid": ["mailto:" + EMAIL]}
+    root = tmp_path / "backup"
+    backup(root, [("HomeDomain", "Library/Preferences/com.apple.identityservices.idstatuscache.plist",
+                   plistlib.dumps(doc))])
+    result = reader(_ctx(root))
+    assert "ios:id-status-cache" in _gaps(result)
+
+
+def test_safari_favicons_page_and_icon_addresses(tmp_path, reader):
+    raw, _ = db_bytes(tmp_path, "CREATE TABLE page_url(uuid, url); CREATE TABLE icon_info(uuid, url, timestamp);",
+                      [("INSERT INTO page_url VALUES('a', ?)", ("https://" + DOMAIN + "/landing",)),
+                       ("INSERT INTO icon_info VALUES('a', ?, 0)", ("https://cdn.example/icon.png",))])
+    root = tmp_path / "backup"
+    backup(root, [("HomeDomain", "Library/Image Cache/Favicons/Favicons.db", raw)])
+    result = reader(_ctx(root))
+    assert any(h.indicator == DOMAIN for h in result.hits)
+    assert "ios:favicons" not in _gaps(result)
+
+
+def test_chromium_favicons(tmp_path, reader):
+    raw, _ = db_bytes(tmp_path, "CREATE TABLE icon_mapping(id, page_url, icon_id); CREATE TABLE favicons(id, url);",
+                      [("INSERT INTO icon_mapping VALUES(1, 'https://ordinary.example/', 1)", ()),
+                       ("INSERT INTO favicons VALUES(1, ?)", ("https://" + DOMAIN + "/favicon.ico",))])
+    root = tmp_path / "backup"
+    backup(root, [("AppDomain-com.google.chrome.ios",
+                   "Library/Application Support/Google/Chrome/Default/Favicons", raw)])
+    result = reader(_ctx(root))
+    assert any(h.indicator == DOMAIN for h in result.hits)
+    assert "ios:favicons" not in _gaps(result)

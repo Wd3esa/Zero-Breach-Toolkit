@@ -69,6 +69,8 @@ you are entitled to examine.
 | Profiles and profile events | Installed profiles (`profile-*.stub`, `.mobileconfig`): PayloadUUID and PayloadIdentifier. `MCProfileEvents.plist`: profile identifier, operation and time of each recorded install or removal. Other device-management files in that folder are searched for literal references only. Current activation unverified |
 | Location clients / app metadata | `clients.plist` keys (`i` + bundle ID, `p` + path), `BundleId` and other supported identifiers; recorded metadata only |
 | Global preferences | Recorded `LDMGlobalEnabled` state; no claim about current Lockdown Mode |
+| iMessage/FaceTime lookups | `idstatuscache.plist` (Preferences, or IdentityServices from iOS 14.7): `mailto:` accounts matched to email indicators, with the lookup date; a lookup does not show who started the contact |
+| Browser favicons | Safari `Favicons.db` (`page_url`, `icon_info`) and Chromium `Favicons` (`icon_mapping`, `favicons`); page and icon addresses are references |
 | WebKit resource plists | Literal string references; unsupported typed layouts are gaps |
 | Sysdiagnose `ps.txt` | Executable path and name of every process running at capture time (graded as present on the device); command lines are searched for references |
 | `mobile_installation.log` and rotations | App identifiers in install records and container creation, container paths. An app installed as a developer build goes under "worth a look" with its usual explanation |

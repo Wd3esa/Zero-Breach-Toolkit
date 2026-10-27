@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- iPhone: accounts looked up by iMessage and FaceTime (`idstatuscache.plist`) are checked
+  against published operator email addresses.
+- iPhone: Safari's and Chromium browsers' favicon stores (pages whose icons were saved)
+  are checked.
 - An interrupted `--update` leaves at most the source being downloaded out of step; every
   finished source stays usable, and the next update repairs the rest.
 - The coverage description of the host check now says that on macOS and Linux it reads
