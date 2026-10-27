@@ -58,21 +58,6 @@ def _wf_canonical(path):
         return os.path.normcase(path)
 
 
-def _wf_prior_report(path):
-    """True for a report this tool wrote earlier (JSON or text), which a new
-    run may replace; anything else that already exists is treated as evidence."""
-    try:
-        if os.path.islink(path) or not os.path.isfile(path):
-            return False
-        with open(path, "rb") as fh:
-            head = fh.read(4096)
-    except OSError:
-        return False
-    if head.lstrip()[:1] == b"{":
-        return b'"schema_version"' in head and b'"zero-breach-' in head
-    return b"Zero Breach" in head and b"spyware indicator check" in head
-
-
 def workflow_output_guard(args, path, document=None):
     """Never replace source evidence with a report, including after menu choices."""
     output = os.path.abspath(path)
@@ -111,8 +96,9 @@ def workflow_output_guard(args, path, document=None):
         from .modules.browser import _app_bases, _app_cache_bases
         # The hash check reads every candidate file in its folders (Downloads,
         # Desktop, Documents, app folders...), so an existing file there is
-        # evidence too. Only an earlier report of this tool may be replaced.
-        if os.path.lexists(output) and not _wf_prior_report(output):
+        # evidence too, whatever it contains: a file that merely looks like an
+        # earlier report must not be able to exempt itself.
+        if os.path.lexists(output):
             from .modules.hashscan import _roots
             output_c = _wf_canonical(output)
             for base in _roots():
@@ -124,8 +110,9 @@ def workflow_output_guard(args, path, document=None):
                 except ValueError:
                     inside = False
                 if inside:
-                    raise ValueError("an output cannot replace an existing file in a folder this scan "
-                                     "fingerprints; choose a new filename")
+                    raise ValueError("{} already exists in a folder this scan checks, so it was not "
+                                     "replaced; choose a new filename (for example add the date)".format(
+                                         os.path.basename(output)))
         if os.path.lexists(output):
             output_c = _wf_canonical(output)
             for base in _app_bases() + _app_cache_bases():

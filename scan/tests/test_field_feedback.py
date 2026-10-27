@@ -107,19 +107,35 @@ def test_report_cannot_replace_a_file_the_hash_check_reads(tmp_path, monkeypatch
     monkeypatch.setattr(hashscan, "_roots", lambda: [str(evidence.parent)])
     monkeypatch.setattr(browser, "_app_bases", lambda: [])
     monkeypatch.setattr(browser, "_app_cache_bases", lambda: [])
-    with pytest.raises(ValueError, match="fingerprints"):
+    with pytest.raises(ValueError, match="new filename"):
         workflow.workflow_output_guard(_guard_args(evidence), str(evidence))
     assert evidence.read_bytes() == b"MZ evidence"
 
 
-def test_earlier_report_in_a_hashed_folder_may_be_replaced(tmp_path, monkeypatch):
-    old = tmp_path / "Downloads" / "report.json"
-    old.parent.mkdir()
-    old.write_text(json.dumps({"schema_version": "1.6", "tool": {"name": "zero-breach-toolkit"}}))
-    monkeypatch.setattr(hashscan, "_roots", lambda: [str(old.parent)])
+@pytest.mark.parametrize("content", [
+    json.dumps({"schema_version": "1.6", "tool": {"name": "zero-breach-toolkit"}}).encode(),
+    b'{ "schema_version" "zero-breach-example" THIS IS NOT VALID JSON',
+    b"Zero Breach Toolkit 0.1.2 - spyware indicator check",
+])
+def test_no_existing_file_in_a_hashed_folder_is_replaced_whatever_it_contains(tmp_path, monkeypatch, content):
+    target = tmp_path / "Downloads" / "report.json"
+    target.parent.mkdir()
+    target.write_bytes(content)
+    monkeypatch.setattr(hashscan, "_roots", lambda: [str(target.parent)])
     monkeypatch.setattr(browser, "_app_bases", lambda: [])
     monkeypatch.setattr(browser, "_app_cache_bases", lambda: [])
-    workflow.workflow_output_guard(_guard_args(old), str(old))  # no error
+    with pytest.raises(ValueError, match="new filename"):
+        workflow.workflow_output_guard(_guard_args(target), str(target))
+    assert target.read_bytes() == content
+
+
+def test_a_new_report_in_a_hashed_folder_is_allowed(tmp_path, monkeypatch):
+    folder = tmp_path / "Downloads"
+    folder.mkdir()
+    monkeypatch.setattr(hashscan, "_roots", lambda: [str(folder)])
+    monkeypatch.setattr(browser, "_app_bases", lambda: [])
+    monkeypatch.setattr(browser, "_app_cache_bases", lambda: [])
+    workflow.workflow_output_guard(_guard_args(folder / "new.json"), str(folder / "new.json"))
 
 
 def _motw(tmp_path, read_zone):
