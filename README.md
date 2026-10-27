@@ -21,6 +21,83 @@ Made by archivegenocide. Built on [Zero Breach](https://github.com/interplains/z
 
 ---
 
+## Step-by-step guide (no technical experience needed)
+
+You do not need a GitHub account. It takes about 20 minutes, most of it waiting.
+
+### On Windows
+
+1. **Install Python** (free). Go to [python.org/downloads](https://www.python.org/downloads/),
+   click the yellow **Download Python** button and open the file. On the first screen,
+   **tick "Add python.exe to PATH"**, then click **Install Now**.
+2. **Download Zero Breach.** On this page, click the green **Code** button near the top, then
+   **Download ZIP**.
+3. **Unzip it.** Open your Downloads folder, right-click `Zero-Breach-Toolkit-main.zip` and
+   choose **Extract All**, then **Extract**.
+4. **Close your web browsers and chat apps** (Chrome, Edge, WhatsApp, Signal…), so their
+   records can be read.
+5. **Start it.** Open the extracted `Zero-Breach-Toolkit-main` folder (if there is another
+   folder with the same name inside, open that too), then the `scan` folder, and double-click
+   **`run-scan.cmd`**. If Windows asks whether to run it, choose **Run** (or **More info**,
+   then **Run anyway**).
+6. **Get the latest spyware lists (recommended).** A menu appears. Type the number next to
+   **Update the indicator lists**, press Enter, then type `y` and press Enter. This is the
+   only step that uses the internet. When it finishes, press Enter to return to the menu.
+7. **Run the check.** Type the number next to **This computer - standard check** (or just
+   press Enter) and wait. It takes about 15 minutes and shows its progress.
+8. **Read the result** (see "What the result means" below). A copy of the report is saved
+   automatically in the `findings` folder inside the toolkit folder.
+
+### On a Mac
+
+1. **Install Python** (free). Go to [python.org/downloads](https://www.python.org/downloads/),
+   click **Download Python**, open the file and follow the installer.
+2. **Download Zero Breach.** On this page, click the green **Code** button, then
+   **Download ZIP**. Safari unzips it into your Downloads folder as `Zero-Breach-Toolkit-main`
+   (in another browser, double-click the downloaded `.zip` to unzip it).
+3. **Allow Terminal to read protected folders.** Open **System Settings → Privacy & Security →
+   Full Disk Access**, click **+**, choose **Applications → Utilities → Terminal**, and switch
+   it on. Without this, macOS blocks Safari's records and some folders.
+4. **Close your web browsers and chat apps.**
+5. **Open Terminal** (press Cmd+Space, type `Terminal`, press Enter). Copy each line below,
+   paste it into Terminal and press Enter:
+   ```
+   cd ~/Downloads/Zero-Breach-Toolkit-main
+   python3 -X utf8 scan/zero-breach-toolkit.py
+   ```
+6. **Get the latest spyware lists (recommended).** In the menu, type the number next to
+   **Update the indicator lists**, press Enter, then type `y` and press Enter.
+7. **Run the check.** Type the number next to **This computer - standard check** (or just
+   press Enter) and wait about 15 minutes.
+8. **Read the result**, then keep a copy: in the menu that follows, type `3` (Save the readable
+   report), press Enter, type `report.txt` and press Enter. It is saved in the
+   `Zero-Breach-Toolkit-main` folder. Type `0` to finish.
+
+On Linux, follow the Mac steps without step 3 (most systems already have Python 3).
+
+### Checking a phone
+
+The phone is checked from a computer. Follow the computer steps above, then:
+
+- **iPhone:** make a local backup on the computer first. See
+  [Checking local iPhone evidence](#checking-local-iphone-evidence-experimental).
+- **Android:** collect the phone's records with AndroidQF first. See
+  [Checking an Android phone](#checking-an-android-phone).
+
+In the menu, choose **A phone**, then drag the backup or collection folder into the window.
+
+### What the result means
+
+- **"No known indicators found"**: nothing from the published spyware lists was found in
+  the places the tool could check. It is not proof that the device is clean: read the list
+  of places that could not be checked.
+- **"Something matched"**: this means *look closer*, not *you are infected*. Do not delete
+  anything and do not visit the address it names. Keep the report and contact the
+  [Access Now Digital Security Helpline](https://www.accessnow.org/help/) (free, 24/7).
+- The report never leaves your computer unless you send it to someone yourself.
+
+---
+
 ## What it checks
 
 ### Windows
