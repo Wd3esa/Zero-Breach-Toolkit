@@ -32,10 +32,14 @@ READER_SPECS = (
         "platforms": ["Windows", "macOS", "Linux"],
         "reads": "Chromium-family and Firefox profiles: history, cookies (host names and "
                  "times only), favicons, cache and stored data, HSTS and connection "
-                 "records. Also every desktop app with a built-in Chromium browser "
+                 "records, including separate standard Linux/macOS Chromium cache directories (Flatpak "
+                 "and snap caches included). Also desktop apps with a built-in Chromium browser "
                  "(Slack, Teams, Discord, Signal, WhatsApp, Outlook, VS Code...), found "
-                 "under AppData by what its folder contains, labelled app:<name>.",
+                 "by what their folder contains - under AppData on Windows, Application Support "
+                 "on macOS, and the user and Flatpak configuration folders on Linux - labelled app:<name>.",
         "check_kinds": {
+            "<browser profile>:bookmarks": "saved Chromium bookmark URLs; references, never proof of a visit",
+            "<browser profile>:safari-history": "supported Safari history: known local origin and successful loads establish contact; failed local loads are attempts; synced/unknown origin stays reference",
             "<browser profile>:download-chains": "Chromium download URL chains; completion and execution unverified",
             "<browser profile>:history": "visited-site history",
             "<browser profile>:cookies": "cookie host names and times",
@@ -47,6 +51,7 @@ READER_SPECS = (
                                                           "that could not be read - a gap "
                                                           "for that account only"),
             "desktop-app web caches": "desktop apps' raw web caches; skipped in default, included by --scan-type full",
+            "app-discovery": "folders that could not be read while looking for desktop apps",
             "firefox:profiles": "finding Firefox profiles",
             "firefox:profiles:<root>": "one folder searched for Firefox profiles",
             "firefox:profile:<name>": "one Firefox profile",
@@ -57,7 +62,8 @@ READER_SPECS = (
                         "cleared history and cache cannot be checked",
                         "browsers not installed in their standard locations",
                         "desktop apps that keep their browser data encrypted or outside "
-                        "AppData, and apps built on something other than Chromium "
+                        "the standard app data folders (snap-packaged apps on Linux "
+                        "included), and apps built on something other than Chromium "
                         "(e.g. Telegram Desktop)"],
     }),
     ReaderSpec('hash', 'hashscan', 'hash', ('all',), ('desktop', 'targeted'), {
@@ -72,8 +78,7 @@ READER_SPECS = (
         },
         "blind_spots": ["this spyware is often rebuilt per target, so a new sample will "
                         "not match a published hash",
-                        "only .dll/.exe/.sys/.ocx/.cpl/.scr/.tmp/.dat/.bin/.ax files up to "
-                        "120 MiB in selected folders; cache and dependency directories are skipped",
+                        "platform-specific candidates up to 120 MiB in selected folders: Windows binary extensions; Unix also extensionless/executable files, libraries and scripts. Full/targeted modes accept all extensions",
                         "files that ran only in memory leave nothing to fingerprint"],
     }),
     ReaderSpec('host', 'host', 'host', ('win32',), ('desktop',), {
@@ -100,7 +105,7 @@ READER_SPECS = (
         "reads": ("Windows records an ordinary account can read: the download origin "
                   "stamped on files (Mark of the Web) in Downloads, Desktop and "
                   "Documents; commands typed into the Win+R box; Microsoft Defender's "
-                  "log; PowerShell's script-block log. No administrator rights."),
+                  "log; PowerShell's script-block log; registered antivirus status from Windows Security Center. No administrator rights."),
         "check_kinds": {
             "psreadline-history": "saved console input; successful execution unverified",
             "explorer-typed-paths": "saved Explorer input; contact unverified",
@@ -113,7 +118,8 @@ READER_SPECS = (
             "mark-of-the-web: remaining files": "files beyond the examination cap",
             "run-history": "commands typed into Win+R (where fake 'verify you are "
                            "human' pages tell people to paste)",
-            "defender-history": "Defender detections, protection turned off, "
+            "antivirus-status": "current registered antivirus product and update status reported by Windows Security Center; not an independent protection test",
+            "defender-history": "Defender detections, historical protection-off events, "
                                 "exclusions added",
             "powershell-history": "PowerShell script blocks, when that log is on",
             "ran-programs": "fingerprints of files in compatibility and launch records "
@@ -127,8 +133,9 @@ READER_SPECS = (
                         "Defender's exclusion list itself needs administrator rights; "
                         "only exclusions added while the log covers it are seen",
                         "a program that ran and was then deleted cannot be "
-                        "fingerprinted (its name stays in Windows' lists)"],
-    }),
+                        "fingerprinted (its name stays in Windows' lists)",
+                        "Antivirus inventory requires Windows 8 or later desktop Security Center; unregistered products and Windows Server are not covered."],
+    }, helpers=('security_products.py',)),
     ReaderSpec('windows-execution', 'execution', 'execution', ('win32',), ('desktop', 'targeted'), {
         "platforms": ["Windows; copied supported artifacts on any OS"],
         "reads": "Bounded Prefetch executable records and read-only Amcache registry hives; no referenced executable is opened.",
@@ -140,15 +147,18 @@ READER_SPECS = (
     }, helpers=("winrecords.py",)),
     ReaderSpec('unix-host', 'posix', 'posix', ('linux', 'darwin'), ('desktop',), {
         "platforms": ["Linux", "macOS"],
-        "reads": "Linux autostart desktop entries, systemd unit and cron files; macOS LaunchAgent/LaunchDaemon property lists. Literal executable configuration only.",
+        "reads": "Linux autostart entries, systemd units and one-level overrides, cron files/scripts; macOS launchd property lists; both platforms' standard shell profiles, saved shell history and current readable text logs. No commands are executed.",
         "check_kinds": {"linux-autostart": "supported autostart desktop entries",
                         "linux-systemd-units": "literal systemd command fields; activation unverified",
                         "linux-cron": "readable cron configuration; shell interpretation unverified",
+                        "unix-shell-history": "saved Bash, Zsh and Fish history text; execution unverified",
+                        "unix-shell-profiles": "standard shell startup files and immediate profile snippets; commands not interpreted",
+                        "unix-system-logs": "readable current system/authentication text logs; bounded recent records, matches remain references",
                         "macos-launch-items": "supported launchd property-list command fields",
                         "unix-host-platform": "host platform applicability",
                         "unix-host-limits": "reader budgets and unsupported configurations"},
         "blind_spots": ["File presence does not establish enablement, execution or infection.",
-                        "No journal/unified-log, memory, managed-login-item or system-wide forensic coverage.",
+                        "No binary journal/unified-log, rotated-log, memory, managed-login-item or system-wide forensic coverage. Custom shell paths and effective unit overrides are not resolved.",
                         "Permission failures, unsupported syntax, symlinks and budget exhaustion remain gaps."]
     }),
     ReaderSpec('android-intrusion', 'intrusion', 'intrusion', ('all',), ('android',), {
@@ -174,6 +184,8 @@ READER_SPECS = (
             "android": "the folder as a whole (not an AndroidQF collection)",
             "android:packages": "installed apps vs app ids, APK fingerprints, signing certs; "
                                 "sideloaded apps with what they can do and when installed",
+            "android:app-fingerprints": "user-installed app files that had no valid SHA-256 fingerprint in the collection",
+            "android:app-certificates": "user-installed app files that had no readable signing certificate in the collection",
             "android:processes": "running apps from processes.txt or AndroidQF processes.json pid/command_line records; arguments are not app identities",
             "android:history": "apps installed, updated or removed, from the battery history",
             "android:crashes": "crash records in the bug report",
@@ -206,6 +218,7 @@ READER_SPECS = (
                         "ios:message-handles": "message correspondent identifiers",
                         "ios:message-attachments": "attachment metadata references",
                         "ios:browser-state": "saved browser tab references",
+                        "ios:safari-bookmarks": "saved Safari bookmark and reading-list URLs; references, not visits",
                         "ios:webkit-statistics": "WebKit observed domain references",
                         "ios:url-cache": "URL cache request references",
                         "ios:whatsapp": "supported WhatsApp message text and direction",

@@ -39,7 +39,7 @@ from typing import Dict, List, Optional, Tuple
 from .iocs import (_ipv4_leading_zero, COMPUTER_TYPES, TYPE_ANDROID_PROP, TYPE_APP_CERT, TYPE_APP_ID,
                    TYPE_DOMAIN, TYPE_EMAIL, TYPE_FILE_NAME, TYPE_FILE_PATH, TYPE_IP,
                    TYPE_PROCESS, TYPE_PROFILE, TYPE_SHA256, Indicator, IocError,
-                   _value_problem, idna_deviation, infer_type)
+                   _value_problem, _ioc_checked_contexts, idna_deviation, infer_type)
 
 TIER_ARTIFACT = "artifact"           # a device artefact (app, process, profile, path ...)
 
@@ -250,6 +250,7 @@ def load_stix(path: str, source: str = "", confidence: str = "primary",
     identities = {o.get("id"): _clean_label(o.get("name", "")) for o in objects
                   if isinstance(o, dict) and o.get("type") == "identity" and isinstance(o.get("id"), str)}
     seen: Dict[Tuple[str, str], Indicator] = {}
+    families_by_value = {}
     for o in objects:
         if not (isinstance(o, dict) and o.get("type") == "indicator"):
             continue
@@ -270,7 +271,9 @@ def load_stix(path: str, source: str = "", confidence: str = "primary",
         if problem:
             result.invalid[problem] += 1
             continue
-        family = "; ".join(sorted(set(linked.get(str(o.get("id")), [])))) or default_family
+        # A linked name that cleans to nothing must not block the fallback family.
+        family_names = {name for name in linked.get(str(o.get("id")), []) if name} or {default_family}
+        family = "; ".join(sorted(name for name in family_names if name))
         if kind == TYPE_SHA256:
             tier = TIER_SAMPLE
         elif kind == TYPE_IP:
@@ -285,7 +288,7 @@ def load_stix(path: str, source: str = "", confidence: str = "primary",
         if not isinstance(platforms, list):
             platforms = []
         context = {"source": _clean_label(src), "publisher": identities.get(o.get("created_by_ref"), "") if isinstance(o.get("created_by_ref"), str) else "",
-                   "artifact_type": kind, "role": tier, "revoked": o.get("revoked") is True,
+                   "artifact_type": kind, "role": tier, "family": family, "revoked": o.get("revoked") is True,
                    "platforms": [_clean_label(v) for v in platforms[:10] if isinstance(v, str)]}
         if kind in (TYPE_FILE_PATH, TYPE_FILE_NAME, TYPE_PROCESS):
             # Typed lookup remains compatible with Windows/phone consumers.
@@ -301,15 +304,22 @@ def load_stix(path: str, source: str = "", confidence: str = "primary",
             context["id"] = _clean_label(o["id"])
         encoded = json.dumps(context, sort_keys=True)
         # Keyed by (type, value): an app id is shaped like a domain.
+        previous_families = families_by_value.setdefault((kind, value), set())
+        previous_families.update(family_names)
+        combined_family = "; ".join(sorted(name for name in previous_families if name))
         if (kind, value) in seen:
             result.duplicates += 1
             prev = seen[(kind, value)]
             seen[(kind, value)] = Indicator(prev.value, prev.tier, prev.confidence, prev.type,
-                                           prev.source, prev.family, tuple(dict.fromkeys(prev.contexts + (encoded,))))
+                                           prev.source, combined_family, _ioc_checked_contexts(prev.contexts + (encoded,)))
             continue
         seen[(kind, value)] = Indicator(value, tier, confidence, kind, src, family, (encoded,))
-        result.families[family or "(unattributed)"] += 1
 
+    # Counted once all objects are merged: a value attributed to a family by any
+    # object is not also counted as unattributed.
+    for names in families_by_value.values():
+        for name in ({name for name in names if name} or {""}):
+            result.families[name or "(unattributed)"] += 1
     result.indicators = sorted(seen.values(), key=lambda i: (i.value, i.type))
     if not result.indicators and not allow_empty:
         raise IocError("{}: no indicator in this bundle can be used by this tool"

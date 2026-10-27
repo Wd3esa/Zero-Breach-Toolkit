@@ -50,6 +50,7 @@ def run(motw_roots=None, runmru=({}, "", ""), events=None, programs=([], {})):
             patch.object(traces, "_tr_read_runmru", lambda: runmru), \
             patch.object(traces, "_tr_ran_programs", lambda: programs), \
             patch.object(traces, "_tr_events", fake_events), \
+            patch.object(traces, "_tr_antivirus_products", lambda: ([{"name": "Fixture antivirus", "state": 0, "signature_status": 1}], "")), \
             patch.object(traces, "_tr_extra_history", lambda *a: None), \
             patch.object(traces, "_tr_persistence", lambda *a: None), \
             patch.object(traces.sys, "platform", "win32"):
@@ -158,14 +159,14 @@ class TestDefender(unittest.TestCase):
         r = run(events={DEF: rows})
         self.assertEqual(r.status, CLEAN)
         whats = [l.what for l in r.leads]
-        self.assertEqual(len(whats), 3, whats)
-        # Order: exclusions, protection off, detections (most telling first).
+        self.assertEqual(len(whats), 2, whats)
+        # Active registered antivirus contextualizes the historical off event.
         self.assertIn("1 Defender exclusion(s) added", whats[0])
         self.assertIn("Paths\\C:\\Hide", whats[0])
         self.assertNotIn("C:\\Old", whats[0])            # a REMOVED exclusion is not listed
-        self.assertEqual(whats[1], "Defender real-time protection was turned off 1 time(s)")
-        self.assertIn("'Trojan:Win32/Pomal!rfn' x2", whats[2])
-        self.assertIn("Quarantine", whats[2])
+        self.assertTrue(any("Defender history records 1 protection-off" in note for note in r.notes))
+        self.assertIn("'Trojan:Win32/Pomal!rfn' x2", whats[1])
+        self.assertIn("Quarantine", whats[1])
         self.assertEqual(r.submetrics["defender_threats"], 1)
         self.assertEqual(r.submetrics["defender_exclusions_added"], 1)
 
@@ -214,7 +215,7 @@ class TestPlatform(unittest.TestCase):
         with patch.object(traces.sys, "platform", "linux"):
             r = traces.run(ctx())
         self.assertFalse(any(c.ran for c in r.checks))
-        self.assertEqual(len(r.checks), 11)
+        self.assertEqual(len(r.checks), 12)
 
 
 def shim_entry(path):

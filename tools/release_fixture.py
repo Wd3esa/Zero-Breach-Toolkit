@@ -292,7 +292,7 @@ def main():
         fixture_platform = "linux" if case == "linux-startup" else "darwin" if case == "macos-startup" else "win32"
         stack.enter_context(patch.object(registry, "reader_select", lambda ctx: select_readers(ctx, platform=fixture_platform)))
         extra_reader = ("windows-execution",) if case == "windows-records" else ("android-intrusion",) if case == "android-intrusion" else ("unix-host",) if case in ("linux-startup", "macos-startup") else ()
-        native_traces = ("traces",) if sys.platform == "win32" else ()
+        native_traces = ("traces",) if sys.platform == "win32" or case.startswith("antivirus-") else ()
         stub_registered_readers(stack, cli if target == "bundle" else None,
                                 keep=("browser", "hash", "host", "android", "ios", "patterns") + native_traces + extra_reader)
         if case in ("linux-startup", "macos-startup"):
@@ -317,10 +317,27 @@ def main():
                 (traces, "_tr_read_runmru", lambda: ({}, "", "")),
                 (traces, "_tr_ran_programs", lambda: ([], {})),
                 (traces, "_tr_events", lambda *a, **k: ([], "")),
+                (traces, "_tr_antivirus_products", lambda: ([{"name": "Fixture antivirus", "state": 0, "signature_status": 1}], "")),
                 (traces, "_tr_extra_history", lambda *a: None),
                 (traces, "_tr_persistence", lambda *a: None),
                 (reporting, "_platform_info", lambda: {"system": {"linux": "Linux", "darwin": "Darwin", "win32": "Windows"}[fixture_platform], "release": "fixture"})):
             stack.enter_context(patch.object(mod, name, value))
+        if case.startswith("antivirus-"):
+            # Real report/CLI behavior with authored OS responses on every host.
+            def antivirus_fixture(context):
+                result = traces.ModuleResult("traces")
+                context.partial = result
+                leads = traces._TrLeads(result)
+                protection = traces._tr_check_antivirus(result, leads)
+                traces._tr_check_defender(result, context, leads, protection)
+                leads.finish()
+                return result
+            stack.enter_context(patch.object(traces, "run_traces" if target == "bundle" else "run", antivirus_fixture))
+            stack.enter_context(patch.object(traces, "_tr_events", lambda log, *a, **k:
+                ([{"Id": 5001, "Time": "2020-01-01", "Data": {}}], "") if log == traces._TR_DEFENDER_LOG else ([], "")))
+            stack.enter_context(patch.object(traces, "_tr_antivirus_products", lambda:
+                ([{"name": "Bitdefender", "state": 0, "signature_status": 1}], "") if case == "antivirus-active"
+                else ([], "Security Center unavailable in fixture")))
         stack.enter_context(patch.object(host.platform, "system", return_value="Windows"))
         stdout, stderr = io.StringIO(), io.StringIO()
         # Do not let the CLI reconfigure the capture streams.
@@ -413,7 +430,7 @@ def main():
         expected_verdict = ("REFERENCES_ONLY" if case == "reference" else "INDICATORS_FOUND" if hits else
                             "NO_KNOWN_INDICATORS_WITH_GAPS" if case in
                             ("corrupt", "quick", "dns-cap-gap", "patterns", "patterns-localserver", "dns-off-retained-clean",
-                             "dns-off-unreadable", "dns-off-empty") else "NO_KNOWN_INDICATORS")
+                             "dns-off-unreadable", "dns-off-empty", "antivirus-unknown") else "NO_KNOWN_INDICATORS")
         require(verdict["status"] == expected_verdict, "incorrect overall verdict: " + str(verdict))
         # Exit code follows the verdict (contract.EXIT_CODES): nothing found WITH
         # gaps is 3, never 0, so a script or AI cannot read missing checks as clean.
@@ -422,6 +439,19 @@ def main():
                          "NO_KNOWN_INDICATORS_WITH_GAPS": 3}[expected_verdict]
         require(code == expected_code, "incorrect CLI exit code: {} (expected {})".format(
             code, expected_code))
+        if case.startswith("antivirus-"):
+            trace = modules["traces"]
+            require(trace["submetrics"]["antivirus_products_on"] == int(case == "antivirus-active"),
+                    "current antivirus state missing or incorrect")
+            require(trace["submetrics"]["defender_protection_off_events"] == 1,
+                    "historical Defender event was lost")
+            require("Defender real-time protection was turned off" not in text,
+                    "old Defender warning is still ambiguous")
+            if case == "antivirus-active":
+                require("Bitdefender" in text and not trace["leads"], "active replacement was not contextualized")
+            else:
+                require(any(c["name"] == "antivirus-status" and not c["ran"] for c in trace["checks"]),
+                        "unavailable antivirus state was called checked")
         if case == "reference":
             require("preserve" not in [x["id"] for x in doc["must_relay"]],
                     "saved reference incorrectly requires preservation")

@@ -104,6 +104,26 @@ def test_message_gap_aggregation_retains_counts(tmp_path, bundle):
         assert len(lines) == 2 and "1000 occurrences" in lines[0]
 
 
+def _add_shadow_columns(db, columns):
+    """Add rowid-alias columns to message. SQLite 3.54 refuses to ADD such a
+    column but still creates a table with one, so rebuild the table then."""
+    try:
+        for column in columns:
+            db.execute("ALTER TABLE message ADD COLUMN " + column + " INTEGER DEFAULT 0")
+        return
+    except sqlite3.OperationalError as exc:
+        if "rowid alias" not in str(exc):
+            raise
+    present = [row[1] for row in db.execute("PRAGMA table_info(message)")]
+    sql = db.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='message'").fetchone()[0]
+    missing = [c for c in columns if c not in present]
+    db.execute("ALTER TABLE message RENAME TO message_old")
+    db.execute(sql[:sql.rindex(")")] + "".join("," + c + " INTEGER DEFAULT 0" for c in missing) + ")")
+    names = ",".join(present)
+    db.execute("INSERT INTO message(" + names + ") SELECT " + names + " FROM message_old")
+    db.execute("DROP TABLE message_old")
+
+
 @pytest.mark.parametrize("shadow", ["one", "all", "without_rowid"])
 def test_message_row_identifier_is_not_a_shadowing_column(tmp_path, bundle, shadow):
     ios_fixture(tmp_path)
@@ -113,8 +133,7 @@ def test_message_row_identifier_is_not_a_shadowing_column(tmp_path, bundle, shad
             db.execute("CREATE TABLE message(id INTEGER PRIMARY KEY,text TEXT,date INTEGER,is_from_me INTEGER) WITHOUT ROWID")
             db.execute("INSERT INTO message VALUES(1,?,0,0)", (BAD,))
         else:
-            for column in (["_rowid_"] if shadow == "one" else ["_rowid_", "rowid", "oid"]):
-                db.execute("ALTER TABLE message ADD COLUMN " + column + " INTEGER DEFAULT 0")
+            _add_shadow_columns(db, ["_rowid_"] if shadow == "one" else ["_rowid_", "rowid", "oid"])
         db.commit()
     for reader in (ios.run, bundle.run_ios):
         r = reader(context(phone_path=str(tmp_path)))

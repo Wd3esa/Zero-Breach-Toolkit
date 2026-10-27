@@ -6,6 +6,7 @@ paths here. This is not a sandbox against concurrent filesystem changes.
 """
 
 import os
+import posixpath
 import stat
 import sys
 
@@ -69,8 +70,13 @@ def path_problem(path):
             # root-owned aliases into /private. These exact system aliases are
             # safe to validate lexically; arbitrary user links remain refused.
             # readlink reads the link itself and does not traverse its target.
+            # Apple's signed cryptexes (Safari's and WebKit's launch agents live
+            # in the App one) are reached the same way, through root-owned
+            # links into the Preboot volume.
             aliases = {"/var": "/private/var", "/tmp": "/private/tmp",
-                       "/etc": "/private/etc"}
+                       "/etc": "/private/etc",
+                       "/System/Cryptexes/App": "/System/Volumes/Preboot/Cryptexes/App",
+                       "/System/Cryptexes/OS": "/System/Volumes/Preboot/Cryptexes/OS"}
             target = aliases.get(current) if sys.platform == "darwin" else None
             if (target and stat.S_ISLNK(info.st_mode)
                     and getattr(info, "st_uid", None) == 0):
@@ -78,20 +84,28 @@ def path_problem(path):
                     link = os.readlink(current)
                 except OSError as exc:
                     return "cannot inspect system alias {}: {}".format(current, exc)
-                # Apple's links commonly use 'private/var', relative to '/'.
-                # Accept only these two exact spellings of the expected target.
-                if link in (target, target.lstrip("/")):
+                # Apple's links commonly use 'private/var', relative to '/', or
+                # '../../System/Volumes/...' relative to the link's folder.
+                # Accept only spellings that name exactly the expected target.
+                relative = posixpath.normpath(posixpath.join(posixpath.dirname(current), link))
+                if link in (target, target.lstrip("/")) or relative == target:
                     canonical = os.path.join(target, *parts[index + 1:])
                     return path_problem(canonical)
             return "symlink or reparse point was not followed: {}".format(current)
     return ""
 
 
+WALK_LINK_REFUSED = "symlink or reparse point was not followed"
+WALK_SPECIAL_REFUSED = "special filesystem entry was not opened"
+
+
 def walk_local(root, onerror=None):
     """Top-down os.walk equivalent that never classifies a link by following it.
 
     The caller can prune the yielded dirs list in place, as with os.walk.
-    Refused entries are delivered to onerror as PermissionError instances.
+    Refused entries are delivered to onerror as PermissionError instances whose
+    strerror is WALK_LINK_REFUSED or WALK_SPECIAL_REFUSED; any other error is a
+    folder or entry that could not be read.
     """
     pending = [root]
     while pending:
@@ -107,11 +121,9 @@ def walk_local(root, onerror=None):
                         info = entry.stat(follow_symlinks=False)
                         if (stat.S_ISLNK(info.st_mode)
                                 or getattr(info, "st_file_attributes", 0) & 0x400):
-                            raise PermissionError(13, "symlink or reparse point "
-                                                  "was not followed", entry.path)
+                            raise PermissionError(13, WALK_LINK_REFUSED, entry.path)
                         if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
-                            raise PermissionError(13, "special filesystem entry "
-                                                  "was not opened", entry.path)
+                            raise PermissionError(13, WALK_SPECIAL_REFUSED, entry.path)
                         (dirs if stat.S_ISDIR(info.st_mode) else files).append(entry.name)
                     except OSError as exc:
                         if onerror:
@@ -122,3 +134,25 @@ def walk_local(root, onerror=None):
             continue
         yield current, dirs, files
         pending.extend(os.path.join(current, d) for d in reversed(dirs))
+
+
+def open_evidence_db(path):
+    """Open the tool's private temporary copy of an evidence database, hardened
+    the same way for every reader: schema-defined functions and views are not
+    trusted, nothing can be written, and string/blob, column and expression
+    sizes are bounded so a hostile database cannot exhaust memory or the stack.
+    Callers query only; the live original is never opened here."""
+    import sqlite3
+    con = sqlite3.connect(path)
+    try:
+        con.execute("PRAGMA trusted_schema=OFF")
+        con.execute("PRAGMA query_only=ON")
+        con.execute("PRAGMA mmap_size=0")
+        if hasattr(con, "setlimit"):  # Python 3.11+
+            con.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 2 * 1024 * 1024)
+            con.setlimit(sqlite3.SQLITE_LIMIT_COLUMN, 256)
+            con.setlimit(sqlite3.SQLITE_LIMIT_EXPR_DEPTH, 100)
+    except sqlite3.Error:
+        con.close()
+        raise
+    return con

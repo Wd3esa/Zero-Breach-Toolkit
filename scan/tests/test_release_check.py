@@ -1,10 +1,12 @@
 """Regressions for false-green failures in the offline release gate itself."""
 import importlib.util
+import hashlib
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location("release_gate", ROOT / "tools/release_check.py")
@@ -31,6 +33,38 @@ class TestWebDownloadChecksum(unittest.TestCase):
     def test_correct_display_does_not_mask_wrong_copy_value(self):
         with self.assertRaisesRegex(RuntimeError, "displayed/copied"):
             gate.check_web_checksum(self.panel(copied="b" * 64), self.DIGEST)
+
+
+class TestRequiredReleaseInputs(unittest.TestCase):
+    def test_required_website_cannot_be_silently_skipped(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(gate, "ROOT", Path(temp)):
+            with self.assertRaisesRegex(RuntimeError, "Website verification required"):
+                gate.release_web_directory(None, required=True)
+            self.assertIsNone(gate.release_web_directory(None))
+            supplied = Path(temp) / "separate-site"
+            self.assertEqual(gate.release_web_directory(supplied, required=True), supplied)
+
+    def test_saved_download_must_match_bytes_without_execution(self):
+        with tempfile.TemporaryDirectory() as temp:
+            downloaded = Path(temp) / "download.py"
+            content = b"raise RuntimeError('must never execute a download')\n"
+            downloaded.write_bytes(content)
+            digest = hashlib.sha256(content).hexdigest()
+            gate.check_downloaded_scanner(downloaded, digest)
+            downloaded.write_bytes(content + b"# different build\n")
+            with self.assertRaisesRegex(RuntimeError, "Downloaded scanner differs"):
+                gate.check_downloaded_scanner(downloaded, digest)
+
+    def test_required_encryption_cannot_be_silently_skipped(self):
+        with patch.object(gate.importlib.util, "find_spec", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "Encrypted-backup coverage requires"):
+                gate.check_backup_dependency()
+
+    def test_required_encryption_checks_the_pinned_version(self):
+        with patch.object(gate.importlib.util, "find_spec", return_value=object()), \
+                patch("importlib.metadata.version", return_value="0.0.0"):
+            with self.assertRaisesRegex(RuntimeError, "differs from requirements-backups"):
+                gate.check_backup_dependency()
 
 
 class TestCaughtNetworkAttempt(unittest.TestCase):

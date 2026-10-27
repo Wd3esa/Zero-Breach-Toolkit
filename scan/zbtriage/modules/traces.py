@@ -87,6 +87,9 @@ _TR_WHY_DETECT = ("Defender detects and removes many everyday threats (adware, c
                   "check the action succeeded.")
 _TR_WHY_RTP = ("People turn protection off briefly to install software, and other "
                "antivirus products switch it off. Attackers also do it.")
+# Windows Security Center's own name for Defender ("Windows Defender" on older
+# Windows, "Microsoft Defender Antivirus" now).
+_TR_DEFENDER_NAME = re.compile(r"\b(?:windows|microsoft) defender\b", re.I)
 _TR_WHY_EXCL = ("Developers, gamers and some programs add exclusions for speed or to "
                 "stop false alarms. Attackers add them to hide their files.")
 
@@ -361,7 +364,42 @@ _TR_DEF_DETECT_CAP = 2000
 _TR_DEF_SETTINGS_CAP = 20000
 
 
-def _tr_check_defender(r, ctx, leads):
+def _tr_antivirus_products():
+    from ..security_products import antivirus_products
+    return antivirus_products()
+
+
+def _tr_check_antivirus(r, leads):
+    from ..contract import sanitize_untrusted
+    products, error = _tr_antivirus_products()
+    active = []
+    states = {0: "on", 1: "off", 2: "temporarily paused", 3: "expired"}
+    for product in products:
+        name = " ".join(sanitize_untrusted(product["name"]).split())[:160]
+        state = states.get(product.get("state"), "unknown")
+        signature = "up to date" if product.get("signature_status") == 1 else "out of date"
+        r.note("Windows Security Center reports antivirus {}: {}; updates {}.".format(name, state, signature))
+        if product.get("state") == 0:
+            active.append(name)
+            if product.get("signature_status") == 0:
+                leads.add("antivirus-status", Lead("antivirus-status", "Windows Security Center",
+                    name + " is on but reports outdated protection updates",
+                    "Open the antivirus application and check its update status. This is not a spyware finding."))
+    r.submetrics["antivirus_products_registered"] = len(products)
+    r.submetrics["antivirus_products_on"] = len(active)
+    if error:
+        r.could_not_run("antivirus-status", error)
+    else:
+        r.ran("antivirus-status")
+        if not active:
+            leads.add("antivirus-status", Lead("antivirus-status", "Windows Security Center",
+                "Windows Security Center did not report an antivirus product currently on",
+                "Check Windows Security and your antivirus application. Some enterprise products do not register here; this does not establish infection or prove that no protection is installed."))
+    r.note("Antivirus status is what Windows Security Center reports now, not an independent health test or a record of protection at earlier event times.")
+    return {"active": active, "complete": not bool(error)}
+
+
+def _tr_check_defender(r, ctx, leads, protection=None):
     detections, err = _tr_events(_TR_DEFENDER_LOG, (1116, 1117, 5001),
                                  _TR_DEF_DETECT_CAP, "named")
     settings, err2 = ([], "") if err else _tr_events(
@@ -426,10 +464,20 @@ def _tr_check_defender(r, ctx, leads):
                 len(exclusions), listing([e[:150] for e, _w in exclusions])),
             _TR_WHY_EXCL, exclusions[0][1]))
     if protection_off:
-        leads.add("defender-history", Lead(
-            "defender-history", log + " (event 5001)",
-            "Defender real-time protection was turned off {} time(s)".format(len(protection_off)),
-            _TR_WHY_RTP, protection_off[0].observed))
+        r.submetrics["defender_protection_off_events"] = len(protection_off)
+        active = (protection or {}).get("active", [])
+        # Another antivirus taking over is the ordinary reason Defender switches
+        # itself off. Defender being on again now explains nothing: malware that
+        # disables it can switch it back on, so that case stays worth a look.
+        others = [name for name in active if not _TR_DEFENDER_NAME.search(name)]
+        if others:
+            r.note("Defender history records {} protection-off event(s), latest {}. Windows Security Center now reports {} on. A different antivirus can make Defender inactive; the historical event does not describe current protection or establish what protected the device then.".format(
+                len(protection_off), protection_off[0].observed or "date unavailable", "; ".join(others)))
+        else:
+            leads.add("defender-history", Lead(
+                "defender-history", log + " (event 5001)",
+                "Defender history records {} protection-off event(s); current protection is not established by this log".format(len(protection_off)),
+                _TR_WHY_RTP + " Check Windows Security and your antivirus application for their current status.", protection_off[0].observed))
     if threats:
         ranked = sorted(threats.items(), key=lambda kv: -kv[1]["count"])
         newest = max(e["when"] for e in threats.values())
@@ -1043,7 +1091,7 @@ def run(ctx) -> ModuleResult:
     r = ModuleResult(NAME)
     ctx.partial = r
     if sys.platform != "win32":
-        for check in ("mark-of-the-web", "run-history", "defender-history",
+        for check in ("mark-of-the-web", "run-history", "defender-history", "antivirus-status",
                       "powershell-history", "ran-programs", "psreadline-history",
                       "explorer-typed-paths", "startup-registrations", "service-registrations",
                       "startup-files", "scheduled-task-actions"):
@@ -1056,7 +1104,8 @@ def run(ctx) -> ModuleResult:
     _tr_check_motw(r, ctx)
     ctx.emit("[*]   traces: Win+R history, Defender and PowerShell logs")
     _tr_check_runbox(r, ctx, leads)
-    _tr_check_defender(r, ctx, leads)
+    protection = _tr_check_antivirus(r, leads)
+    _tr_check_defender(r, ctx, leads, protection)
     _tr_check_powershell(r, ctx, leads)
     ctx.emit("[*]   traces: fingerprinting files in compatibility and launch records")
     _tr_check_ran_programs(r, ctx)

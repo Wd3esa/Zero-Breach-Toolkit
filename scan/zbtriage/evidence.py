@@ -10,6 +10,27 @@ import re
 from .contract import sanitize_untrusted
 
 
+def _ev_modified_key(value):
+    """Order validated UTC timestamps without losing fractional precision.
+
+    Date-only values are retained for legacy publisher metadata. Unparseable
+    values cannot establish that a withdrawal is newer than an active version.
+    """
+    if not isinstance(value, str):
+        return None
+    match = re.fullmatch(r"(\d{4}-\d{2}-\d{2})(?:T(\d{2}:\d{2}:\d{2})(?:\.(\d+))?Z)?", value)
+    if not match:
+        return None
+    whole = match[1] + "T" + (match[2] or "00:00:00")
+    try:
+        when = datetime.datetime.fromisoformat(whole)
+    except ValueError:
+        return None
+    # Fractions sort lexically once trailing zeroes are removed; equal instants
+    # remain equal even when publishers use different decimal precision.
+    return when, (match[3] or "").rstrip("0")
+
+
 def _withdrawn_only(records):
     """True only when every publisher that lists the indicator has withdrawn it.
 
@@ -33,13 +54,14 @@ def _withdrawn_only(records):
     if not groups:
         return False
     for group in groups.values():
-        dated = [r for r in group if isinstance(r.get("modified"), str) and r["modified"]]
-        undated = [r for r in group if r not in dated]
+        versions = [(_ev_modified_key(r.get("modified")), r) for r in group]
+        dated = [(key, r) for key, r in versions if key is not None]
+        undated = [r for key, r in versions if key is None]
         if any(r.get("revoked") is not True for r in undated):
             return False
         if dated:
-            newest = max(r["modified"] for r in dated)
-            if not all(r.get("revoked") is True for r in dated if r["modified"] == newest):
+            newest = max(key for key, _ in dated)
+            if not all(r.get("revoked") is True for key, r in dated if key == newest):
                 return False
     return True
 

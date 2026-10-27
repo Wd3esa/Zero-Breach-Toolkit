@@ -68,8 +68,16 @@ def _handoff_stat(info):
             "ctime_ns": info.st_ctime_ns, "device": info.st_dev, "file_id": info.st_ino}
 
 
-def _handoff_same(before, after):
-    return stat.S_ISREG(after.st_mode) and _handoff_stat(before) == _handoff_stat(after)
+def _handoff_same(before, after, same_api=False):
+    # Windows Python 3.12+ can report different st_ctime_ns values from stat
+    # and fstat for the same unchanged file, so ctime is compared only between
+    # two fstat calls; volume, file ID, size and mtime are comparable across both.
+    if not stat.S_ISREG(after.st_mode):
+        return False
+    first, second = _handoff_stat(before), _handoff_stat(after)
+    if not same_api:
+        del first["ctime_ns"], second["ctime_ns"]
+    return first == second
 
 
 def _handoff_selection(paths):
@@ -225,7 +233,7 @@ def handoff_write(document, destination, paths=()):
                             output.write(raw)
                             digest.update(raw)
                         after = os.fstat(source.fileno())
-                        if count != expected.st_size or not _handoff_same(before, after):
+                        if count != expected.st_size or not _handoff_same(before, after, same_api=True):
                             raise ValueError("selected evidence changed while it was being copied")
                         _handoff_path(path)
                         if not _handoff_same(after, os.stat(path, follow_symlinks=False)):

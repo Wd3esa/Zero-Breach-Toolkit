@@ -36,8 +36,9 @@ import urllib.request
 from typing import Callable, Dict, List, Optional, Tuple
 
 from . import __version__
-from .iocs import (TYPE_DOMAIN, TYPE_IP, TYPE_SHA256, Indicator, IocError, IocSet,
-                   infer_type, load_any)
+from .iocs import (SHARED_SERVICE_HOSTS, SHARED_SERVICE_REASON, TYPE_DOMAIN, TYPE_IP,
+                   TYPE_SHA256, Indicator, IocError, IocSet, infer_type, load_any,
+                   shared_service_domain)
 from .localpaths import path_problem
 from .stix import TIER_INFRA, TIER_INFRA_IP, TIER_SAMPLE, _normalise
 
@@ -153,13 +154,7 @@ _MISP_KINDS = {"domain": TYPE_DOMAIN, "hostname": TYPE_DOMAIN, "ip-dst": TYPE_IP
 # dozens of bit.ly and tinyurl.com links, and reducing them to their host would
 # grade every ordinary bit.ly visit as contact with Pegasus infrastructure. Such
 # URLs are counted as not applicable instead (the scan has no per-link matching).
-_SHARED_LINK_HOSTS = frozenset("""
-bit.ly bitly.com j.mp tinyurl.com goo.gl t.co ow.ly is.gd v.gd buff.ly rebrand.ly
-cutt.ly shorturl.at tiny.cc lnkd.in t.ly rb.gy s.id
-google.com googleusercontent.com blogspot.com dropbox.com dropboxusercontent.com
-github.com githubusercontent.com pastebin.com mediafire.com mega.nz wetransfer.com
-facebook.com fb.com instagram.com twitter.com x.com t.me wa.me
-""".split())
+_SHARED_LINK_HOSTS = SHARED_SERVICE_HOSTS  # one list for every loader (iocs.py)
 
 
 def _shared_link_host(host: str) -> bool:
@@ -197,6 +192,9 @@ def load_list(path: str, fmt: str, source: str, family: str) -> IocSet:
         value, problem = _normalise(kind, raw)
         if problem:
             refused[problem] = refused.get(problem, 0) + 1
+            return
+        if kind == TYPE_DOMAIN and shared_service_domain(value):
+            not_applicable[SHARED_SERVICE_REASON] = not_applicable.get(SHARED_SERVICE_REASON, 0) + 1
             return
         tier = (TIER_INFRA_IP if kind == TYPE_IP else
                 TIER_SAMPLE if kind == TYPE_SHA256 else TIER_INFRA)

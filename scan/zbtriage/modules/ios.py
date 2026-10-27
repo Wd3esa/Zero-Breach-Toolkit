@@ -318,7 +318,9 @@ def run(ctx) -> ModuleResult:
                     visit_source, source_join = "NULL", ""
                     if have_sources:
                         _ios_tables(con, ("visit_source",))
-                        visit_source = "COALESCE(s.source,1)"
+                        # No source row denotes a normal visit; an explicit NULL
+                        # source is damaged/unknown metadata, not that default.
+                        visit_source = "CASE WHEN s.id IS NULL THEN 1 ELSE s.source END"
                         source_join = " LEFT JOIN visit_source s ON s.id=v.id"
                     else:
                         gap(check, "visit-source metadata unavailable; URLs remain references without proof of local contact")
@@ -402,9 +404,19 @@ def run(ctx) -> ModuleResult:
                             browser_record = check != "ios:messages"
                             if browser_record:
                                 from .browser import _browser_url_evidence
+                                # Chromium VisitSource values 0..7 include synced,
+                                # extension, imported and actor records. Keep the
+                                # established contact grade only for browsed (1).
+                                supported_origins = range(8) if check == "ios:chrome-history" else (0, 1)
+                                origin_known = type(row[2]) is int and row[2] in supported_origins
+                                if check == "ios:chrome-history" and row[3] is not None and not isinstance(row[3], str):
+                                    origin_known = False
+                                if not origin_known:
+                                    gap(check, "visit-origin metadata unsupported; URL remains a reference without proof of local contact")
                                 local_visit = (check == "ios:safari" and type(row[2]) is int and row[2] == 0 or
                                                check == "ios:firefox-history" and type(row[2]) is int and row[2] == 1 or
                                                check == "ios:chrome-history" and type(row[2]) is int and row[2] == 1 and row[3] in (None, ""))
+                                local_visit = local_visit and origin_known
                                 if check != "ios:safari":
                                     when = _ios_browser_timestamp(row[1], check == "ios:chrome-history")
                                 for ind, grade in _browser_url_evidence(text, ctx.iocs,

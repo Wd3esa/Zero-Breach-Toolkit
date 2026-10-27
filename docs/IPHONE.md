@@ -44,6 +44,7 @@ schema used by every iOS/app release.
 | Chrome / Firefox | Default and discovered supported profiles; existing local-visit provenance rules remain |
 | DataUsage / filesystem netusage | `ZPROCESS` names, optional bundle IDs and process timestamps; no arbitrary SQL/schema guessing |
 | Safari BrowserState | `tabs.url`, optional title; saved references |
+| Safari Bookmarks | `Bookmarks.db`, supported `bookmarks.url` rows; saved references, not browsing/contact evidence |
 | WebKit statistics | `observed_domains.registrableDomain`; saved references |
 | URL cache | `cfurl_cache_response.request_key`; references, without inferring successful contact |
 | WhatsApp | `ZWAMESSAGE` text, integer direction, optional date/sender; outgoing text stays a reference |

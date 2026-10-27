@@ -299,6 +299,19 @@ class TestDarwinSystemAliases(unittest.TestCase):
                     self.assertIn(target + "/folder/file", queried)
                     self.assertNotIn(alias + "/folder", queried)
 
+    def test_apple_cryptex_alias_uses_its_relative_spelling(self):
+        alias, target = "/System/Cryptexes/App", "/System/Volumes/Preboot/Cryptexes/App"
+        path = alias + "/System/Library/LaunchAgents/com.example.plist"
+        problem, queried, links = self.guard_fixture(
+            path, {alias: "../../System/Volumes/Preboot/Cryptexes/App"})
+        self.assertEqual(problem, "")
+        self.assertEqual(links, [alias])
+        self.assertIn(target + "/System/Library/LaunchAgents/com.example.plist", queried)
+        for wrong in ("../../Users/person/Cryptexes/App", "../System/Volumes/Preboot/Cryptexes/App"):
+            with self.subTest(target=wrong):
+                problem, _queried, _links = self.guard_fixture(path, {alias: wrong})
+                self.assertIn("not followed", problem)
+
     def test_untrusted_owner_and_unexpected_targets_are_rejected(self):
         for target, owner in (("/private/var", 501), ("/Users/person", 0),
                               ("//server/share", 0), ("private/../var", 0)):

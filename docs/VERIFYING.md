@@ -89,3 +89,10 @@ Use the release key only through its configured keyring; never export a private 
 this project, GitHub, a chat or logs. Finish and test the release artifacts first, then sign
 the manifest; verify with a separate keyring holding only the public key, and confirm that a
 modified file is rejected.
+
+`python tools/make_release.py` does those steps in order: it builds the single file twice and
+refuses to continue if the two differ, writes `release/v<version>/` with the scanner, the
+public key and `SHA256SUMS.txt`, signs the manifest and the scanner (gpg asks for the
+passphrase itself), then verifies each signature with a temporary keyring that holds only the
+public key and checks that a modified scanner is rejected. It publishes nothing; attaching
+the folder's files to a GitHub release is a separate, deliberate step.

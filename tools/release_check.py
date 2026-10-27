@@ -18,7 +18,8 @@ CASES = ("clean", "contact", "reference", "hash", "corrupt", "hit-and-gap", "qui
          "dns-cap-hit", "dns-cap-gap", "dns-off-retained-hit", "dns-off-retained-clean",
          "dns-off-unreadable", "dns-off-empty", "bad-feed", "patterns", "patterns-localserver", "phone-process", "unicode-report", "ios-row-recovery",
          "history-host-reference", "workflow-handoff", "windows-records", "android-intrusion",
-         "linux-startup", "macos-startup", "ios-wal", "ios-sysdiagnose")
+         "linux-startup", "macos-startup", "ios-wal", "ios-sysdiagnose",
+         "antivirus-active", "antivirus-unknown")
 
 
 class DownloadPanel(HTMLParser):
@@ -74,6 +75,38 @@ def check_web_checksum(html, digest):
         raise RuntimeError("Scan page displayed/copied checksum differs from the candidate download")
 
 
+def release_web_directory(supplied, required=False):
+    web = supplied
+    if web is None and (ROOT / "web/scan").is_dir():
+        web = ROOT / "web/scan"
+    if web is None and required:
+        raise RuntimeError("Website verification required; supply --web-dir with the scan-page source")
+    return web
+
+
+def check_downloaded_scanner(path, digest):
+    # A separately saved download is data, never imported or executed here.
+    actual = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            actual.update(chunk)
+    if actual.hexdigest() != digest:
+        raise RuntimeError("Downloaded scanner differs from the candidate build")
+
+
+def check_backup_dependency():
+    if importlib.util.find_spec("cryptography") is None:
+        raise RuntimeError("Encrypted-backup coverage requires the pinned requirements-backups.txt dependency")
+    from importlib.metadata import version
+    # One pinned version per platform (selected by an environment marker when
+    # pip installs it); the installed version must be one of them.
+    required = {line.split("==", 1)[1].split()[0].rstrip("\\").strip() for line in
+                (ROOT / "requirements-backups.txt").read_text(encoding="utf-8").splitlines()
+                if line.startswith("cryptography==")}
+    if version("cryptography") not in required:
+        raise RuntimeError("Optional backup dependency differs from requirements-backups.txt")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--require-patterns", action="store_true",
@@ -84,6 +117,12 @@ def main():
                         help="also require this staged download to match the fresh build")
     parser.add_argument("--web-dir", type=Path,
                         help="Scan-page directory; require its logic test and checksum to pass")
+    parser.add_argument("--require-web", action="store_true",
+                        help="fail instead of skipping when the scan-page source is unavailable")
+    parser.add_argument("--downloaded-scanner", type=Path,
+                        help="also compare a separately saved public download with the candidate; never execute it")
+    parser.add_argument("--require-backups", action="store_true",
+                        help="require the pinned encrypted-backup dependency")
     parser.add_argument("--output-dir", type=Path,
                         default=ROOT / "findings" / "release-checks")
     args = parser.parse_args()
@@ -112,6 +151,9 @@ def main():
         print("PASS {} ({:.1f}s)".format(name, time.monotonic() - tick), flush=True)
 
     try:
+        web = release_web_directory(args.web_dir, args.require_web)
+        if args.require_backups:
+            check_backup_dependency()
         sys.path.insert(0, str(ROOT / "scan"))
         from zbtriage.candiru_rules import CANDIRU_ENGINE_VERSION
         engine = importlib.util.find_spec("yara_x") is not None
@@ -143,6 +185,9 @@ def main():
                 raise RuntimeError("two single-file builds differ")
             digest = hashlib.sha256(first.read_bytes()).hexdigest()
             summary["scanner_sha256"] = digest
+            if args.downloaded_scanner:
+                check_downloaded_scanner(args.downloaded_scanner, digest)
+                steps.append({"name": "downloaded-scanner-checksum", "seconds": 0})
             scanner = first
             if args.scanner:
                 scanner = args.scanner.resolve()
@@ -163,9 +208,6 @@ def main():
                 if pair[0] != pair[1]:
                     raise RuntimeError("source/download results disagree for " + case)
 
-            web = args.web_dir
-            if web is None and (ROOT / "web/scan").is_dir():
-                web = ROOT / "web/scan"
             if web is not None:
                 web = web.resolve()
                 test = web / "ops/test_scan_logic.js"

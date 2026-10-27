@@ -113,7 +113,12 @@ and dots on both sides but not by letters, so a dotted quad written inside text 
 mention in saved content stays a reference. When the same value arrives from several files,
 the first file's tier and confidence are kept and the curated file is loaded first, so a
 hand-reviewed tier is never overwritten by a feed's. Confidence is provenance only and
-never changes a verdict.
+never changes a verdict. Duplicate rows within one curated file must agree on tier and
+confidence; conflicting classifications are refused. Matching duplicates retain each
+source and family attribution. STIX objects sharing a value retain all linked families
+and their separate publisher assertions.
+Curated files are limited to 16 MiB and 64 KiB per line. More than 256 distinct publisher
+assertions for one indicator is refused rather than silently dropping versions or attribution.
 Missing, rejected, stale or undated downloaded sources are reported as coverage gaps.
 Freshness uses curated content dates and successful feed verification times, never file
 modification times. Refreshing a source does not mean its historical indicators are newly observed.
@@ -179,21 +184,42 @@ input, record counts, decoded text and total work are bounded; earlier findings 
 later unsupported records where recovery is possible.
 
 Linux startup inspection reads immediate entries in standard autostart directories,
-systemd service directories and readable cron configuration. The desktop reader recognizes
+systemd unit directories, one-level unit/type `.d/*.conf` overrides, readable cron
+configuration and hourly/daily/weekly/monthly script directories. The desktop reader recognizes
 a narrow literal `Exec` grammar with optional double quotes. It does not use shell parsing,
 expand field codes or resolve executable search paths. Unsupported quoting, escapes and
 substitutions remain references with a gap. Explicitly disabled or conditional entries
 remain references. Systemd and cron content remains reference evidence because unit
-activation, drop-ins, overrides and shell interpretation are not resolved.
+activation, effective overrides and shell interpretation are not resolved. Reading an
+override file does not establish whether its settings are effective.
 
 macOS startup inspection reads standard LaunchAgent/LaunchDaemon XML and binary property
 lists. A valid labelled entry's literal `Program`, or first `ProgramArguments` element,
 can match an exact executable-path indicator as configured evidence unless explicitly
-disabled. This does not resolve external launchd overrides or establish activation or
+disabled; an entry with a conditional `Disabled` value is searched as text only. Apple's
+App cryptex launch folders are read too, so the system links into them are not gaps. Apple
+plists shipped with an unquoted XML declaration, DOCTYPE or `<plist version>` are read after
+that optional prolog is normalised.
+This does not resolve external launchd overrides or establish activation or
 execution. Arbitrary arguments and network strings remain references. Modern managed
-login items, journal/unified logs, shell profiles and memory are outside these readers.
+login items, binary journal/unified logs and memory are outside these readers.
 Permissions, redirections, malformed input and exhausted entry/byte limits produce gaps;
 retained files are still checked when an enumeration limit is reached.
+
+Both Unix platforms inspect standard Bash/Zsh/fish shell startup files and saved history.
+Selected current text system logs are included where readable. These produce reference
+evidence only: a saved command is not proof it ran, and a log string alone is not proof of
+contact. Configuration files have a 1 MiB limit; history and logs retain at most their
+recent 4 MiB, discard a partial first line, and report the omitted prefix as a gap.
+The shared reader also bounds total bytes and entries. It does not discover custom history
+paths, unsaved shell input, rotated/compressed logs or other users' homes.
+Linked startup files are not followed. A unit masked by a link to `/dev/null` has nothing to
+read, and a systemd alias whose target is a file inspected in its own right (including a
+target spelled through a merged-`/usr` system's root-owned `/lib` link) is not a gap; a
+link pointing anywhere else is reported as a gap naming its target. A standard location that
+is only a link to another inspected location (Alpine's `/var/spool/cron/crontabs`) is
+inspected once. Files this account may not read are reported
+as needing administrator rights.
 
 Default file fingerprinting also uses platform-specific roots. Linux includes ordinary
 user folders, `.local/bin`, XDG configuration/data locations and temporary directories;
@@ -204,7 +230,43 @@ and supported script extensions. Selection does not execute or load them. Full a
 scans accept all file extensions; the 120 MiB limit and access restrictions still apply.
 Standard Linux browser paths honor absolute XDG configuration/cache overrides. Arbitrary
 filesystem links remain refused; exact root-owned macOS `/var`, `/tmp` and `/etc` aliases
-are validated against their expected `/private` locations.
+are validated against their expected `/private` locations, and the `/System/Cryptexes/App`
+and `OS` links against their Preboot volume locations.
+
+Chromium cache roots are mapped separately from profile roots on Linux and macOS using
+the standard configuration/cache directory relationship, including each Flatpak app's own
+`config`/`cache` folders and a snap package's `common`/`common/.cache` folders.
+Desktop apps with a built-in Chromium browser are discovered by folder contents under
+AppData on Windows, Application Support on macOS (Apple's own `com.apple.*` data is
+skipped) and the user and per-app Flatpak configuration folders on Linux. Folders that
+cannot be read during that discovery are reported as a gap; links are not followed, and
+folders the operating system itself locks are not counted. Explicit selections include a
+separate cache only when it falls inside a selected target. Chromium bookmark JSON is
+bounded by bytes, entries and folder depth; bookmark URLs are references, not visits.
+Desktop Safari's supported `History.db` records use visit-level origin and load status:
+known local successful visits are contacts, known local failures are attempts, synced visits
+are references, and uncertain metadata stays a reference with a gap. Ambiguous duplicate
+item IDs are refused as visit targets. Temporary SQLite copies retain the existing WAL
+and source-read protections.
+
+Android file-path and filename identities retain the publisher's original case, including
+merged assertions. Case differences and longer path prefixes do not become exact matches.
+Structured crash command paths are matched as complete identities; generic device-log path
+strings require token boundaries and retain the log reader's existing evidence grade.
+Android app files are compared by SHA-256 fingerprint and by signing certificate. A
+user-installed app file whose fingerprint or certificate is missing from the collection is
+reported as a gap for that comparison; built-in apps on the system partitions, whose
+certificates collections commonly omit, are listed in a note instead.
+
+Windows antivirus inventory uses Windows Security Center's native product-list interface,
+loaded from system libraries, with no vendor-specific executable or remediation action.
+All registered products are eligible. Product and signature states are reported as Windows
+reports them; a failed or unsupported query remains a gap. If a registered product is on,
+historical Defender protection-off events remain contextual notes rather than current
+protection warnings. Defender detections, added exclusions and indicator matches are still
+reported. Current registration cannot establish protection at an earlier event time or
+independently verify a product's health; unregistered products and Windows Server are outside
+this inventory's coverage.
 
 History, favicon and download-chain readers grade an HTTP(S) URL's host separately from its
 path, query, fragment, user information and surrounding title. A more specific indicator in

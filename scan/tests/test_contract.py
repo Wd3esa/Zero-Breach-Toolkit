@@ -172,7 +172,8 @@ class TestDescribe(unittest.TestCase):
             if f.endswith(".py")]
         names = set()
         for path in sources:
-            text = io.open(path, encoding="utf-8").read()
+            with io.open(path, encoding="utf-8") as source:
+                text = source.read()
             names |= set(re.findall(r'\.(?:ran|could_not_run)\(\s*"([^"]+)"', text))
         described = {}
         for module, entry in contract.CHECK_CATALOGUE.items():

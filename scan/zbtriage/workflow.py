@@ -75,6 +75,16 @@ def workflow_output_guard(args, path, document=None):
     # read its whole profile folder, so every existing file in that folder is
     # evidence too - not just the one file that was named.
     from .modules.browser import _TARGET_DB_FILES
+    if not getattr(args, "target", ()) and not getattr(args, "phone", None):
+        from .modules.browser import CHROMIUM_ROOTS, FIREFOX_ROOTS, _firefox_roots, _browser_cache_profile
+        for _, root in CHROMIUM_ROOTS:
+            sources.extend((root, _browser_cache_profile(root)))
+        for profile, cache in (FIREFOX_ROOTS if FIREFOX_ROOTS is not None else _firefox_roots()):
+            sources.extend((profile, cache))
+        from .modules.posix import _ux_roots
+        sources.extend(root for _, root, _ in _ux_roots())
+        from .modules.browser import _browser_safari_roots
+        sources.extend(root for _, root in _browser_safari_roots())
     for raw in list(getattr(args, "target", ()) or ()):
         if os.path.basename(raw).lower() in _TARGET_DB_FILES and os.path.isfile(raw):
             sources.append(os.path.dirname(os.path.abspath(raw)))

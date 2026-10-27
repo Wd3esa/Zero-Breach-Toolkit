@@ -46,7 +46,7 @@ import zlib
 
 from ..iocs import (TYPE_ANDROID_PROP, TYPE_APP_CERT, TYPE_APP_ID, TYPE_DOMAIN,
                     TYPE_FILE_NAME, TYPE_FILE_PATH, TYPE_PROCESS, TYPE_SHA256, Indicator,
-                    IocSet)
+                    IocSet, ioc_exact_identity, ioc_path_mentioned)
 from ..localpaths import path_problem
 from ..result import EV_DEVICE_LOG, EV_ON_DEVICE, EV_RECEIVED, Hit, Lead, ModuleResult
 
@@ -246,6 +246,8 @@ def _an_getprop(path):
 
 
 _AN_SECTION = re.compile(r"^DUMP OF SERVICE ([^:\n]+):\n", re.M)
+_AN_SHA256_RE = re.compile(r"[0-9a-f]{64}")
+_AN_SHA1_RE = re.compile(r"[0-9a-f]{40}")
 
 
 def _an_sections(text):
@@ -479,6 +481,10 @@ def _an_packages(r, ctx, folder, info):
         r.could_not_run("android:packages", "app list must be a JSON list")
         return []
     iocs = ctx.iocs
+    # App files whose fingerprint or signing certificate is missing or malformed
+    # are not compared at all; counting them keeps that from reading as checked.
+    fp = {"files": 0, "no_hash": 0, "no_cert": 0, "no_files": 0,
+          "builtin_no_hash": 0, "builtin_no_cert": 0}
     for pkg in packages:
         if not isinstance(pkg, dict) or not isinstance(pkg.get("name"), str) or not pkg["name"]:
             r.could_not_run("android:packages", "an app record has no valid package name")
@@ -494,22 +500,42 @@ def _an_packages(r, ctx, folder, info):
             else:
                 detail = "an app the researchers name is installed: " + name
             _an_hit(r, ind, where, detail, observed=info["installed"].get(name, ""))
-        for f in pkg.get("files") or []:
+        files = pkg.get("files")
+        if not isinstance(files, list) or not files:
+            # No app file recorded: neither fingerprint check covered this app.
+            # Some built-in components legitimately have none (Android 15's
+            # com.android.privatespace), so only a user-installed app counts.
+            if pkg.get("third_party"):
+                fp["no_files"] += 1
+            files = []
+        # Built-in apps on the read-only system partitions are reported as a
+        # note: collections commonly omit their certificates.
+        prefix = "builtin_" if pkg.get("system") else ""
+        for f in files:
+            fp["files"] += 1
             if not isinstance(f, dict):
+                fp[prefix + "no_hash"] += 1
+                fp[prefix + "no_cert"] += 1
                 continue
             apk = str(f.get("path") or "")
             sha = str(f.get("sha256") or "").lower()
+            if not _AN_SHA256_RE.fullmatch(sha):
+                fp[prefix + "no_hash"] += 1
             ind = iocs.lookup_typed(TYPE_SHA256, sha) if sha else None
             if ind:
                 _an_hit(r, ind, "{} ({})".format(where, apk),
                         "this app's file has the fingerprint of a published sample")
             cert = f.get("certificate") if isinstance(f.get("certificate"), dict) else {}
-            for key in ("Sha256", "Sha1"):
+            usable_cert = False
+            for key, pattern in (("Sha256", _AN_SHA256_RE), ("Sha1", _AN_SHA1_RE)):
                 value = str(cert.get(key) or "").replace(":", "").lower()
+                usable_cert = usable_cert or bool(pattern.fullmatch(value))
                 ind = iocs.lookup_typed(TYPE_APP_CERT, value) if value else None
                 if ind:
                     _an_hit(r, ind, where, "this app is signed with a certificate the "
                             "researchers tie to spyware ({})".format(key.upper()))
+            if not usable_cert:
+                fp[prefix + "no_cert"] += 1
         installer = str(pkg.get("installer") or "")
         if pkg.get("third_party") and installer not in _AN_STORES:
             powers = sorted({_AN_POWERS[op] for op in info["appops"].get(name, ())
@@ -530,7 +556,32 @@ def _an_packages(r, ctx, folder, info):
     r.checked += len(packages)
     r.submetrics["android_apps"] = len(packages)
     r.ran("android:packages")
+    _an_fingerprint_coverage(r, iocs, fp)
     return packages
+
+
+def _an_fingerprint_coverage(r, iocs, fp):
+    """Report app files that could not be compared by fingerprint or signing
+    certificate, for the indicator kinds that are actually loaded. Missing data
+    for user-installed apps is a gap; for built-in apps it is a note."""
+    r.submetrics["android_app_files"] = fp["files"]
+    without = " and {} user-installed app(s) listed no app file".format(fp["no_files"]) if fp["no_files"] else ""
+    for kind, check, missing, what, against in (
+            (TYPE_SHA256, "android:app-fingerprints", "no_hash", "valid SHA-256 fingerprint",
+             "published spyware sample fingerprints"),
+            (TYPE_APP_CERT, "android:app-certificates", "no_cert", "readable signing certificate",
+             "certificates tied to spyware")):
+        if not iocs.of_type(kind):
+            continue
+        if fp["builtin_" + missing]:
+            r.note("{}: {} built-in app file(s) on the system partitions had no {} in the "
+                   "collection and were not compared with {}".format(
+                       check, fp["builtin_" + missing], what, against))
+        if fp[missing] or fp["no_files"]:
+            r.could_not_run(check, "{} user-installed app file record(s) had no {}{}; those apps "
+                            "were not compared with {}".format(fp[missing], what, without, against))
+        else:
+            r.ran(check)
 
 
 def _an_processes(r, ctx, folder):
@@ -717,7 +768,7 @@ def _an_files(r, ctx, folder):
                 continue
             p = str(f.get("path") or "")
             ind = ctx.iocs.lookup_typed(TYPE_FILE_PATH, p)
-            if ind:
+            if ind and ioc_exact_identity(ind, p):
                 _an_hit(r, ind, p, "a file at a path the researchers tie to spyware")
             sha = str(f.get("sha256") or "").lower()
             ind = ctx.iocs.lookup_typed(TYPE_SHA256, sha) if sha else None
@@ -725,7 +776,7 @@ def _an_files(r, ctx, folder):
                 _an_hit(r, ind, p, "this file has the fingerprint of a published sample")
             base = p.rsplit("/", 1)[-1]
             ind = ctx.iocs.lookup_typed(TYPE_FILE_NAME, base) if base else None
-            if ind:
+            if ind and ioc_exact_identity(ind, base):
                 r.add_lead(Lead("android:files", p,
                                 "a file name researchers list ({}); a name alone is weak".format(base),
                                 "Ordinary software can use the same file name."))
@@ -809,7 +860,7 @@ def _an_device_logs(r, ctx, folder, already):
                         "installed earlier)", evidence=EV_DEVICE_LOG)
         text = data.decode("utf-8", "replace")
         for ind in ctx.iocs.of_type(TYPE_FILE_PATH):
-            if ind.value in text and ind.value not in already:
+            if ind.value not in already and ioc_path_mentioned(ind, text):
                 already.add(ind.value)
                 _an_hit(r, ind, "phone log " + name,
                         "the phone's system records name this spyware path",
@@ -829,8 +880,12 @@ def _an_crashes(r, ctx, folder):
         return
     for name, when, cmdline in tombs:
         app = cmdline.split(":", 1)[0].strip()
-        ind = (ctx.iocs.lookup_typed(TYPE_APP_ID, app)
-               or ctx.iocs.lookup_typed(TYPE_FILE_PATH, cmdline.split(" ", 1)[0]))
+        ind = ctx.iocs.lookup_typed(TYPE_APP_ID, app)
+        if ind is None:
+            executable = cmdline.split(" ", 1)[0]
+            candidate = ctx.iocs.lookup_typed(TYPE_FILE_PATH, executable)
+            if candidate and ioc_exact_identity(candidate, executable):
+                ind = candidate
         if ind:
             _an_hit(r, ind, "crash record " + name.rsplit("/", 1)[-1],
                     "a crash record names it: " + cmdline[:200], evidence=EV_DEVICE_LOG,

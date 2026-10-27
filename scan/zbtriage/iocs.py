@@ -154,6 +154,30 @@ class Indicator:
         }
 
 
+def ioc_identity_values(indicator):
+    """Original spellings of a case-sensitive artifact identity, if published."""
+    originals = []
+    for encoded in indicator.contexts:
+        try:
+            record = json.loads(encoded)
+        except (ValueError, TypeError):
+            continue
+        value = record.get("case_sensitive_value", indicator.value) if isinstance(record, dict) else indicator.value
+        if isinstance(value, str) and value not in originals:
+            originals.append(value)
+    return originals or [indicator.value]
+
+
+def ioc_exact_identity(indicator, value):
+    return isinstance(value, str) and value in ioc_identity_values(indicator)
+
+
+def ioc_path_mentioned(indicator, text):
+    """A complete literal Unix path token, never a prefix or folded spelling."""
+    return any(re.search(r"(?:^|[\s\"'=:(])" + re.escape(value) + r"(?=$|[\s\"';,)])", text)
+               for value in ioc_identity_values(indicator))
+
+
 def _char_at(hay, pos):
     """One character of a str or bytes haystack, as a str, or None if out of range."""
     if pos < 0 or pos >= len(hay):
@@ -643,6 +667,9 @@ class IocError(Exception):
 # else is refused, loudly, rather than scanned for.
 _DOMAIN_LABEL_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
 _MAX_INDICATORS = 20000
+_MAX_CURATED_BYTES = 16 * 1024 * 1024
+_MAX_CURATED_LINE = 65536
+_MAX_IOC_CONTEXTS = 256
 
 
 # UTS#46 deviation characters that survive the invisible-character checks. IDNA
@@ -711,6 +738,61 @@ def _value_problem(value, kind):
     return ""   # hashes are already pinned to 64 hex digits by infer_type
 
 
+def _ioc_curated_lines(path):
+    """Bound total bytes and individual rows, including comments and duplicates."""
+    try:
+        with io.open(path, "rb") as fh:
+            if os.fstat(fh.fileno()).st_size > _MAX_CURATED_BYTES:
+                raise IocError("curated indicator byte limit exceeded")
+            total, lineno = 0, 0
+            while True:
+                raw = fh.readline(_MAX_CURATED_LINE + 1)
+                if not raw:
+                    return
+                lineno += 1
+                total += len(raw)
+                if total > _MAX_CURATED_BYTES:
+                    raise IocError("curated indicator byte limit exceeded while reading")
+                if len(raw) > _MAX_CURATED_LINE:
+                    raise IocError("line {}: curated indicator line limit exceeded".format(lineno))
+                yield lineno, raw.decode("utf-8-sig" if lineno == 1 else "utf-8")
+    except UnicodeError as exc:
+        raise IocError("curated indicator file is not valid UTF-8") from exc
+    except OSError as exc:
+        raise IocError("curated indicator file could not be read ({})".format(type(exc).__name__)) from exc
+
+
+# Whole shared public services. A publisher listing one of these (or its www.
+# name) means one link or account on it was malicious, not the service: as a
+# domain indicator it would match every ordinary visit to the service and to all
+# its subdomains. Such indicators are skipped at load, for every list format,
+# and counted as not applicable. A specific account's own subdomain (a blog on
+# blogspot.com) is not on this list and stays.
+SHARED_SERVICE_HOSTS = frozenset("""
+bit.ly bitly.com j.mp tinyurl.com goo.gl t.co ow.ly is.gd v.gd buff.ly rebrand.ly
+cutt.ly shorturl.at tiny.cc lnkd.in t.ly rb.gy s.id
+google.com googleusercontent.com googleapis.com storage.googleapis.com docs.google.com
+drive.google.com sites.google.com blogspot.com dropbox.com dropboxusercontent.com
+dl.dropboxusercontent.com github.com gist.github.com api.github.com github.io
+githubusercontent.com raw.githubusercontent.com gist.githubusercontent.com
+objects.githubusercontent.com pastebin.com mediafire.com mega.nz wetransfer.com
+facebook.com fb.com instagram.com twitter.com x.com t.me telegram.me telegram.org
+wa.me whatsapp.com youtube.com youtu.be
+""".split())
+SHARED_SERVICE_REASON = "a whole shared public service (only specific links or accounts on it were malicious)"
+
+
+def shared_service_domain(value: str) -> bool:
+    host = (value or "").lower().rstrip(".")
+    return host in SHARED_SERVICE_HOSTS or (host.startswith("www.") and host[4:] in SHARED_SERVICE_HOSTS)
+
+
+def _ioc_drop_shared(indicators):
+    """(indicators that are not whole shared services, number skipped)."""
+    kept = [i for i in indicators if not (i.type == TYPE_DOMAIN and shared_service_domain(i.value))]
+    return kept, len(indicators) - len(kept)
+
+
 def load(path: str) -> IocSet:
     if not os.path.exists(path):
         raise IocError("IOC file not found: {}".format(path))
@@ -720,65 +802,73 @@ def load(path: str) -> IocSet:
     # not whitespace to str.strip(). With plain utf-8 the first indicator in a
     # user's own list silently became "﻿controlium.net", matched nothing,
     # and the scan then reported finding nothing without ever having looked.
-    with io.open(path, encoding="utf-8-sig") as fh:
-        for lineno, raw in enumerate(fh, 1):
-            line = raw.strip()
-            if not line or line.startswith("#"):
-                # The '# as-of: YYYY-MM-DD' header is the set's curated date. It
-                # is the deterministic timestamp every generated artifact uses,
-                # so the whole build is reproducible from committed content.
-                m = _ASOF_RE.match(line)
-                if m:
-                    asof = m.group(1)
-                continue
-            parts = [p.strip() for p in line.split("\t") if p.strip() != ""]
-            if len(parts) < 3:
-                raise IocError(
-                    "line {}: expected 3 to 5 tab-separated columns, got {!r}"
-                    .format(lineno, line))
-            value, tier, confidence = parts[0].lower(), parts[1], parts[2]
-            # 4th column is an optional source tag; files written before it
-            # existed stay valid.
-            source = parts[3] if len(parts) > 3 else ""
-            # Optional 5th column: the spyware family, for files that hold more
-            # than one vendor (e.g. curated_mercenary.txt).
-            family = parts[4] if len(parts) > 4 else ""
-            if tier not in VALID_TIERS:
-                raise IocError("line {}: unknown tier {!r}".format(lineno, tier))
-            if confidence not in VALID_CONFIDENCE:
-                raise IocError(
-                    "line {}: unknown confidence {!r}".format(lineno, confidence))
-            if value.startswith("﻿") or any(
-                    c in value for c in "​‌‍⁠"):
-                raise IocError("line {}: invisible character in {!r} - the "
-                               "file was probably re-saved by an editor".format(
-                                   lineno, value))
-            kind = infer_type(value)
-            if kind == TYPE_DOMAIN:
-                value = value.rstrip(".")
-                if not value.isascii():
-                    deviant = idna_deviation(value)
-                    if deviant:
-                        raise IocError(
-                            "line {}: {!r} contains {!r}, which older IDNA and browsers "
-                            "encode differently; write the name in its xn-- form "
-                            "instead".format(lineno, value, deviant))
-                    # Store internationalised names in the punycode form that
-                    # browsers and DNS actually record, so matching is exact.
-                    try:
-                        value = value.encode("idna").decode("ascii")
-                    except UnicodeError:
-                        raise IocError("line {}: {!r} is not a valid domain "
-                                       "name".format(lineno, value))
-            problem = _value_problem(value, kind)
-            if problem:
-                raise IocError("line {}: {!r}: {}".format(
-                    lineno, value[:80], problem))
-            seen[value] = Indicator(value, tier, confidence, kind, source, family)
-            if len(seen) > _MAX_INDICATORS:
-                raise IocError("more than {:,} indicators - refusing what looks "
-                               "like a corrupted or hostile feed".format(
-                                   _MAX_INDICATORS))
+    for lineno, raw in _ioc_curated_lines(path):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            # The '# as-of: YYYY-MM-DD' header is the set's curated date. It
+            # is the deterministic timestamp every generated artifact uses,
+            # so the whole build is reproducible from committed content.
+            m = _ASOF_RE.match(line)
+            if m:
+                asof = m.group(1)
+            continue
+        parts = [p.strip() for p in raw.rstrip("\r\n").split("\t")]
+        if not 3 <= len(parts) <= 5:
+            raise IocError(
+                "line {}: expected 3 to 5 tab-separated columns, got {!r}"
+                .format(lineno, line))
+        value, tier, confidence = parts[0].lower(), parts[1], parts[2]
+        # 4th column is an optional source tag; files written before it
+        # existed stay valid.
+        source = parts[3] if len(parts) > 3 else ""
+        # Optional 5th column: the spyware family, for files that hold more
+        # than one vendor (e.g. curated_mercenary.txt).
+        family = parts[4] if len(parts) > 4 else ""
+        if tier not in VALID_TIERS:
+            raise IocError("line {}: unknown tier {!r}".format(lineno, tier))
+        if confidence not in VALID_CONFIDENCE:
+            raise IocError(
+                "line {}: unknown confidence {!r}".format(lineno, confidence))
+        if value.startswith("﻿") or any(
+                c in value for c in "​‌‍⁠"):
+            raise IocError("line {}: invisible character in {!r} - the "
+                           "file was probably re-saved by an editor".format(
+                               lineno, value))
+        kind = infer_type(value)
+        if kind == TYPE_DOMAIN:
+            value = value.rstrip(".")
+            if not value.isascii():
+                deviant = idna_deviation(value)
+                if deviant:
+                    raise IocError(
+                        "line {}: {!r} contains {!r}, which older IDNA and browsers "
+                        "encode differently; write the name in its xn-- form "
+                        "instead".format(lineno, value, deviant))
+                # Store internationalised names in the punycode form that
+                # browsers and DNS actually record, so matching is exact.
+                try:
+                    value = value.encode("idna").decode("ascii")
+                except UnicodeError:
+                    raise IocError("line {}: {!r} is not a valid domain "
+                                   "name".format(lineno, value))
+        problem = _value_problem(value, kind)
+        if problem:
+            raise IocError("line {}: {!r}: {}".format(
+                lineno, value[:80], problem))
+        ind = Indicator(value, tier, confidence, kind, source, family)
+        prev = seen.get(value)
+        if prev is not None:
+            if (prev.tier, prev.confidence) != (tier, confidence):
+                raise IocError("line {}: conflicting duplicate classification for {!r}; "
+                               "resolve the tier and confidence in this file".format(lineno, value))
+            ind = _ioc_combine(prev, ind)
+        seen[value] = ind
+        if len(seen) > _MAX_INDICATORS:
+            raise IocError("more than {:,} indicators - refusing what looks "
+                           "like a corrupted or hostile feed".format(
+                               _MAX_INDICATORS))
+    kept, skipped = _ioc_drop_shared(list(seen.values()))
+    seen = {i.value: i for i in kept}
     if not seen:
         # An empty list must never produce a report. A truncated download or an
         # emptied file would otherwise run a full scan, search for nothing, and
@@ -791,6 +881,7 @@ def load(path: str) -> IocSet:
     s = IocSet(sorted(seen.values(), key=lambda i: i.value),
                os.path.abspath(path), mtime)
     s.asof = asof
+    s.shared_skipped = skipped
     return s
 
 
@@ -822,6 +913,11 @@ def load_any(path: str, source: str = "", family: str = "",
         from .stix import load_stix   # local import: stix imports this module
         imp = load_stix(path, source=source, family_fallback=family,
                         allow_empty=allow_empty)
+        imp.indicators, skipped = _ioc_drop_shared(imp.indicators)
+        if skipped:
+            imp.not_applicable[SHARED_SERVICE_REASON] += skipped
+        if not imp.indicators and not allow_empty:
+            raise IocError("{}: no indicator in this bundle can be used by this tool".format(path))
         try:
             mtime = os.path.getmtime(path)
         except OSError:
@@ -831,13 +927,36 @@ def load_any(path: str, source: str = "", family: str = "",
         return s
     s = load(path)
     s.sets = [{"path": s.source_path, "format": "curated", "usable": len(s),
-               "families": {}, "as_of": s.asof}]
+               "families": {}, "as_of": s.asof,
+               "not_applicable_to_this_scan": ({SHARED_SERVICE_REASON: s.shared_skipped}
+                                               if s.shared_skipped else {})}]
     return s
 
 
 def _ioc_context_records(ind):
     return ind.contexts or (json.dumps({"source": ind.source, "artifact_type": ind.type,
-                                       "role": ind.tier}, sort_keys=True),)
+                                       "role": ind.tier, "family": ind.family,
+                                       "confidence": ind.confidence}, sort_keys=True),)
+
+
+def _ioc_combine(prev, ind):
+    """Retain publisher assertions while keeping the first file's classification."""
+    contexts = _ioc_checked_contexts(_ioc_context_records(prev) + _ioc_context_records(ind))
+    sources = "; ".join(dict.fromkeys(part for item in (prev.source, ind.source)
+                                    for part in item.split("; ") if part))
+    families = "; ".join(dict.fromkeys(part for item in (prev.family, ind.family)
+                                     for part in item.split("; ") if part))
+    return Indicator(prev.value, prev.tier, prev.confidence, prev.type, sources, families, contexts)
+
+
+def _ioc_checked_contexts(records):
+    """Never silently discard publisher versions or accept unbounded duplication."""
+    unique = {}
+    for record in records:
+        unique[record] = None
+        if len(unique) > _MAX_IOC_CONTEXTS:
+            raise IocError("too many publisher assertions for one indicator; refusing ambiguous feed")
+    return tuple(unique)
 
 
 def merge(sets: List["IocSet"]) -> IocSet:
@@ -861,13 +980,7 @@ def merge(sets: List["IocSet"]) -> IocSet:
             if prev is None:
                 by_value[(ind.type, ind.value)] = ind
                 continue
-            sources = "; ".join(x for x in dict.fromkeys(
-                [prev.source, ind.source]) if x)
-            families = "; ".join(x for x in dict.fromkeys(
-                [prev.family, ind.family]) if x)
-            by_value[(ind.type, ind.value)] = Indicator(prev.value, prev.tier, prev.confidence,
-                                            prev.type, sources, families, tuple(dict.fromkeys(
-                                                _ioc_context_records(prev) + _ioc_context_records(ind))))
+            by_value[(ind.type, ind.value)] = _ioc_combine(prev, ind)
     if len(by_value) > _MAX_MERGED:
         raise IocError("more than {:,} indicators across all files - refusing"
                        .format(_MAX_MERGED))

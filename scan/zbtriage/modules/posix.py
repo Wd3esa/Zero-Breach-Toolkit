@@ -1,4 +1,4 @@
-"""Bounded literal Linux/macOS startup configuration inspection.
+"""Bounded Linux/macOS configuration, saved shell input and text-log inspection.
 
 No command is executed, no referenced program is opened, and configuration
 presence does not establish activation or execution. Network text is only a
@@ -22,14 +22,29 @@ NAME = "unix-host"
 _UX_FILE_CAP = 1024 * 1024
 _UX_COUNT_CAP = 4096
 _UX_TOTAL_CAP = 32 * 1024 * 1024
+_UX_TEXT_CAP = 4 * 1024 * 1024
+_UX_UNIT_SUFFIXES = (".service", ".timer", ".socket", ".path", ".target", ".mount",
+                     ".automount", ".swap", ".slice", ".scope")
 
 
 def _ux_roots():
     home = os.path.expanduser("~")
     cfg = os.environ.get("XDG_CONFIG_HOME", "")
     cfg = cfg if os.path.isabs(cfg) else os.path.join(home, ".config")
+    data = os.environ.get("XDG_DATA_HOME", "")
+    data = data if os.path.isabs(data) else os.path.join(home, ".local", "share")
+    common = [("unix-shell-history", os.path.join(home, name), "history-file")
+              for name in (".bash_history", ".zsh_history")]
+    common.append(("unix-shell-history", os.path.join(data, "fish", "fish_history"), "history-file"))
+    common += [("unix-shell-profiles", os.path.join(home, name), "shell-file")
+               for name in (".profile", ".bash_profile", ".bash_login", ".bashrc", ".zprofile", ".zshrc", ".zshenv", ".zlogin")]
+    common += [("unix-shell-profiles", path, "shell-file") for path in (
+        os.path.join(cfg, "fish", "config.fish"), "/etc/profile", "/etc/bash.bashrc",
+        "/etc/bashrc", "/etc/zshenv", "/etc/zprofile", "/etc/zshrc")]
+    common += [("unix-shell-profiles", path, "shell-dir") for path in (
+        "/etc/profile.d", os.path.join(cfg, "fish", "conf.d"))]
     if sys.platform.startswith("linux"):
-        return [
+        return common + [
             ("linux-autostart", os.path.join(cfg, "autostart"), "desktop"),
             ("linux-autostart", "/etc/xdg/autostart", "desktop"),
             ("linux-systemd-units", os.path.join(cfg, "systemd", "user"), "unit"),
@@ -37,25 +52,98 @@ def _ux_roots():
             ("linux-systemd-units", "/etc/systemd/system", "unit"),
             ("linux-systemd-units", "/usr/lib/systemd/user", "unit"),
             ("linux-systemd-units", "/usr/lib/systemd/system", "unit"),
+            ("linux-systemd-units", "/run/systemd/system", "unit"),
+            ("linux-systemd-units", "/usr/local/lib/systemd/system", "unit"),
             ("linux-cron", "/etc/crontab", "cron-file"),
             ("linux-cron", "/etc/cron.d", "cron"),
             ("linux-cron", "/var/spool/cron/crontabs", "user-cron"),
             ("linux-cron", "/var/spool/cron", "user-cron"),
-        ]
+            ("linux-cron", "/etc/crontabs", "user-cron"),  # BusyBox cron (Alpine)
+        ] + [("linux-cron", "/etc/cron." + period, "cron-script")
+             for period in ("hourly", "daily", "weekly", "monthly")] + [
+            ("unix-system-logs", path, "log-file") for path in (
+                "/var/log/syslog", "/var/log/messages", "/var/log/auth.log", "/var/log/secure")]
     if sys.platform == "darwin":
-        return [("macos-launch-items", p, "plist") for p in (
+        return common + [("macos-launch-items", p, "plist") for p in (
             os.path.join(home, "Library", "LaunchAgents"),
             "/Library/LaunchAgents", "/Library/LaunchDaemons",
-            "/System/Library/LaunchAgents", "/System/Library/LaunchDaemons")]
+            "/System/Library/LaunchAgents", "/System/Library/LaunchDaemons",
+            # Apple ships Safari's and WebKit's agents in the App cryptex and
+            # links them into /System/Library; reading them here keeps those
+            # links from being gaps.
+            "/System/Cryptexes/App/System/Library/LaunchAgents",
+            "/System/Cryptexes/App/System/Library/LaunchDaemons")] + [
+                ("unix-system-logs", "/var/log/system.log", "log-file")]
     return []
 
 
+def _ux_reason(exc):
+    """A short, specific reason for a file the reader could not use."""
+    if isinstance(exc, UnicodeDecodeError):
+        return "not UTF-8 text"
+    text = " ".join(str(exc).split()) or type(exc).__name__
+    return text[:160]
+
+
+def _ux_where(root, paths):
+    """'<file>' for one file (or a single-file root), else '<n> files under <root>,
+    for example <file>'."""
+    if len(paths) == 1:
+        return paths[0]
+    return "{} files under {}, for example {}".format(len(paths), root, paths[0])
+
+
+def _ux_link_target(path):
+    """Where a symbolic link points, worked out from its text without opening
+    or resolving it; None when path is not a link."""
+    try:
+        if not stat.S_ISLNK(os.lstat(path).st_mode):
+            return None
+        target = os.readlink(path)
+    except OSError:
+        return None
+    return os.path.normpath(target if os.path.isabs(target) else os.path.join(os.path.dirname(path), target))
+
+
+def _ux_merged_usr(path):
+    """On merged-/usr systems /lib, /bin and /sbin are root-owned links into
+    /usr, so an alias spelled /lib/systemd/... names a /usr/lib/systemd file.
+    Checked lexically (readlink of that one exact link), never followed."""
+    parts = path.split("/")
+    if len(parts) > 2 and parts[0] == "" and parts[1] in ("lib", "lib64", "bin", "sbin"):
+        top = "/" + parts[1]
+        try:
+            info = os.lstat(top)
+            if (stat.S_ISLNK(info.st_mode) and getattr(info, "st_uid", None) == 0
+                    and os.readlink(top) in ("usr" + top, "/usr" + top)):
+                return "/usr" + path
+        except OSError:
+            pass
+    return path
+
+
+def _ux_inspected(path, root_dirs):
+    """True when path is a file this reader inspects under its own name: directly
+    inside an inspected folder and accepted by that folder's file filter."""
+    path = _ux_merged_usr(path)
+    kind = root_dirs.get(os.path.dirname(path))
+    if kind is None:
+        return False
+    suffix = {"desktop": ".desktop", "plist": ".plist", "unit": _UX_UNIT_SUFFIXES}.get(kind)
+    return not suffix or os.path.basename(path).endswith(suffix)
+
+
 def _ux_read(path):
+    return _ux_read_data(path, False)[0]
+
+
+def _ux_read_data(path, recent):
     problem = path_problem(path)
     if problem:
         raise OSError(problem)
     before = os.lstat(path)
-    if not stat.S_ISREG(before.st_mode) or before.st_size > _UX_FILE_CAP:
+    limit = _UX_TEXT_CAP if recent else _UX_FILE_CAP
+    if not stat.S_ISREG(before.st_mode) or (not recent and before.st_size > limit):
         raise OSError("not a regular file or exceeds configuration size limit")
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     fd = os.open(path, flags)
@@ -63,11 +151,26 @@ def _ux_read(path):
         opened = os.fstat(stream.fileno())
         if not stat.S_ISREG(opened.st_mode) or (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino):
             raise OSError("configuration changed before reading")
-        data = stream.read(_UX_FILE_CAP + 1)
+        truncated = recent and opened.st_size > limit
+        if truncated:
+            stream.seek(opened.st_size - limit)
+        data = stream.read(limit if recent else limit + 1)
         after = os.fstat(stream.fileno())
-    if len(data) > _UX_FILE_CAP or (opened.st_size, opened.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+    if recent:
+        # A live log or history grows while it is read; appended records are
+        # simply newer than this snapshot. Shrinking means it was rotated or
+        # rewritten, and what was read may not be what the file holds.
+        if after.st_size < opened.st_size:
+            raise OSError("text log was truncated or rotated while reading")
+    elif len(data) > limit or (opened.st_size, opened.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
         raise OSError("configuration changed or exceeded read limit")
-    return data
+    if truncated:
+        # The first bytes may be the middle of a UTF-8 character or a record.
+        # One very long record has no line break to cut at: keep it, without
+        # the partial character it may start with.
+        head, newline, rest = data.partition(b"\n")
+        data = rest if newline else data.lstrip(bytes(range(0x80, 0xC0)))
+    return data, truncated
 
 
 def _ux_program(command):
@@ -82,10 +185,28 @@ def _ux_program(command):
     return first[1:-1] if first.startswith('"') else first
 
 
+# Some of Apple's own launch plists ship their XML declaration, DOCTYPE and
+# <plist version=...> tag without quotes, which the XML parser rejects. The
+# declaration and DOCTYPE are optional, and only that one attribute is quoted.
+_UX_LOOSE_PROLOG = re.compile(rb"\A\s*<\?xml[^>]*\?>\s*(?:<!DOCTYPE[^>]*>\s*)?")
+_UX_LOOSE_PLIST_TAG = re.compile(rb"\A<plist\s+version=([0-9.]+)\s*>")
+
+
+def _ux_plist(data):
+    try:
+        return plistlib.loads(data)
+    except xml.parsers.expat.ExpatError:
+        body = _UX_LOOSE_PROLOG.sub(b"", data, count=1)
+        body = _UX_LOOSE_PLIST_TAG.sub(lambda m: b'<plist version="' + m.group(1) + b'">', body, count=1)
+        if body == data or not body.startswith(b"<plist"):
+            raise
+        return plistlib.loads(body)
+
+
 def _ux_fields(data, kind):
     """Return (text, exact executable paths, limitation); no target access."""
     if kind == "plist":
-        doc = plistlib.loads(data)
+        doc = _ux_plist(data)
         if not isinstance(doc, dict):
             raise ValueError("launch item is not a dictionary")
         argv, program = doc.get("ProgramArguments", []), doc.get("Program", "")
@@ -93,7 +214,10 @@ def _ux_fields(data, kind):
             raise ValueError("unsupported launch program fields")
         disabled = doc.get("Disabled", False)
         if not isinstance(disabled, bool):
-            raise ValueError("unsupported Disabled field")
+            # Conditional (non-boolean) Disabled values exist in Apple's own
+            # plists. Whether the job runs is then unknown: its text is still
+            # searched, but no program is treated as configured to start.
+            disabled = True
         # Other fields are metadata, not literal commands. Avoid recursive input
         # traversal and do not infer executables from arbitrary nested strings.
         text = "\n".join([program] + argv)
@@ -127,10 +251,10 @@ def _ux_fields(data, kind):
     return text, [], ""
 
 
-def _ux_match(result, ctx, path, text, programs):
+def _ux_match(result, ctx, path, text, programs, context="startup configuration"):
     for ind in ctx.iocs.search(text.lower()):
         result.add_hit(Hit(ind.value, path,
-            "Indicator text in startup configuration; contact and execution are unverified.",
+            "Indicator text in {}; contact and execution are unverified.".format(context),
             tier=ind.tier, confidence=ind.confidence, source=ind.source,
             family=ind.family, kind=ind.type, evidence=EV_REFERENCED, artifact=path))
     for ind in ctx.iocs.indicators:
@@ -157,7 +281,7 @@ def _ux_match(result, ctx, path, text, programs):
         configured = bool(configured_paths)
         result.add_hit(Hit(ind.value, path,
             ("Literal executable path matches a published indicator; activation and execution are unverified."
-             if configured else "Published path appears in startup configuration; active executable use is unverified.")
+             if configured else "Published path appears in {}; active executable use is unverified.".format(context))
             + " Exact path: " + matched_paths[0],
             tier=ind.tier, confidence=ind.confidence, source=ind.source,
             family=ind.family, kind=ind.type,
@@ -173,14 +297,22 @@ def run(ctx):
         return result
     total = count = 0
     seen = set()
+    # Distributions link standard locations to each other (Alpine's
+    # /var/spool/cron/crontabs -> /etc/crontabs); such a link is inspected
+    # under its own name, not reported as a refused redirection.
+    root_dirs = {os.path.normpath(r): k for _c, r, k in roots if not k.endswith("-file")}
     for check, root, kind in roots:
-        failures = 0
+        problems, denied, unexpanded = [], [], []
+        links_out = []
         try:
+            if _ux_link_target(root) in root_dirs:
+                result.ran(check)
+                continue
             problem = path_problem(root)
             if problem:
                 raise OSError(problem)
             info = os.lstat(root)
-            if kind == "cron-file":
+            if kind.endswith("-file"):
                 candidates = [root]
             else:
                 if not stat.S_ISDIR(info.st_mode):
@@ -193,7 +325,25 @@ def run(ctx):
                             result.skipped += 1
                             result.could_not_run(check, "configuration entry count limit reached; retained entries still inspected")
                             break
-                        suffix = {"desktop": ".desktop", "plist": ".plist", "unit": ".service"}.get(kind)
+                        if kind == "unit" and (entry.name.endswith(tuple(s + ".d" for s in _UX_UNIT_SUFFIXES))
+                                               or entry.name in {s[1:] + ".d" for s in _UX_UNIT_SUFFIXES}):
+                            try:
+                                if path_problem(entry.path):
+                                    raise OSError("redirected unit override directory")
+                                with os.scandir(entry.path) as children:
+                                    for child in children:
+                                        count += 1
+                                        if count > _UX_COUNT_CAP:
+                                            result.could_not_run(check, "configuration entry count limit reached; retained entries still inspected")
+                                            break
+                                        if child.name.endswith(".conf"):
+                                            candidates.append(child.path)
+                            except OSError as exc:
+                                problems.append((entry.path, _ux_reason(exc)))
+                            if count > _UX_COUNT_CAP:
+                                break
+                            continue
+                        suffix = {"desktop": ".desktop", "plist": ".plist", "unit": _UX_UNIT_SUFFIXES}.get(kind)
                         if suffix and not entry.name.endswith(suffix):
                             continue
                         # Subdirectories and unit activation links are not followed.
@@ -201,37 +351,76 @@ def run(ctx):
                             continue
                         candidates.append(entry.path)
             for path in candidates:
+                # Links are never followed. A unit masked by a link to /dev/null
+                # has nothing to read, and a link whose target lies in an
+                # inspected folder (systemd aliases) is read there under its own
+                # name; any other link is a gap that names where it points.
+                linked = _ux_link_target(path)
+                if linked is not None:
+                    if not (linked == os.devnull or linked in root_dirs or _ux_inspected(linked, root_dirs)):
+                        links_out.append((path, linked))
+                    continue
                 if path in seen:
                     continue
                 seen.add(path)
                 try:
-                    data = _ux_read(path)
+                    recent = kind in ("history-file", "log-file")
+                    if recent:
+                        data, truncated = _ux_read_data(path, True)
+                        if truncated:
+                            result.could_not_run(check, "older records outside the recent-text byte limit were not read: " + path)
+                    else:
+                        data = _ux_read(path)
                     total += len(data)
                     if total > _UX_TOTAL_CAP:
                         raise OSError("total configuration read limit reached")
                     text, programs, limitation = _ux_fields(data, kind)
-                    _ux_match(result, ctx, path, text, programs)
+                    context = ("saved shell history" if kind == "history-file" else "saved text log" if kind == "log-file"
+                               else "shell startup configuration" if kind.startswith("shell-") else "startup configuration")
+                    _ux_match(result, ctx, path, text, programs, context)
                     result.checked += 1
                     if limitation:
-                        failures += 1
-                        result.skipped += 1
+                        # The whole text was searched; only the stronger
+                        # "configured program" grade could not be given.
+                        unexpanded.append(path)
+                except PermissionError:
+                    denied.append(path)
+                    result.skipped += 1
                 except (OSError, ValueError, configparser.Error, plistlib.InvalidFileException,
-                        xml.parsers.expat.ExpatError, OverflowError, RecursionError):
-                    failures += 1
+                        xml.parsers.expat.ExpatError, OverflowError, RecursionError) as exc:
+                    problems.append((path, _ux_reason(exc)))
                     result.skipped += 1
                 if total > _UX_TOTAL_CAP:
                     break
             result.ran(check)
-            if failures:
-                result.could_not_run(check, "{} configuration file(s) unreadable, refused, oversized or unsupported under {}".format(failures, root))
+            if links_out:
+                result.could_not_run(check, "{} linked file(s) under {} point outside the inspected folders and "
+                                     "were not followed (for example {} -> {})".format(
+                                         len(links_out), root, links_out[0][0], links_out[0][1]))
+            if denied:
+                result.could_not_run(check, "{} could not be read with this account's permissions; reading "
+                                     "{} needs administrator (root) rights".format(
+                                         _ux_where(root, denied), "it" if len(denied) == 1 else "them"))
+            if problems:
+                result.could_not_run(check, "{} could not be used: {}".format(
+                    _ux_where(root, [p for p, _ in problems]), problems[0][1]))
+            if unexpanded:
+                result.note("{}: {} autostart entr{} use launch syntax this reader does not expand (for "
+                            "example {}); the text was searched, but no program is treated as "
+                            "configured to start".format(check, len(unexpanded), "y" if len(unexpanded) == 1 else "ies",
+                                                         unexpanded[0]))
         except FileNotFoundError:
             result.ran(check)  # known root absent, not an unreadable root
+        except PermissionError:
+            result.skipped += 1
+            result.could_not_run(check, "{} could not be read with this account's permissions; reading it "
+                                 "needs administrator (root) rights".format(root))
         except OSError as exc:
             result.skipped += 1
             result.could_not_run(check, "{}: {}".format(root, exc))
         if total > _UX_TOTAL_CAP or count > _UX_COUNT_CAP:
             result.could_not_run("unix-host-limits", "remaining startup roots were not inspected after the safety limit")
             break
-    result.note("Startup configuration only: no commands or referenced programs were opened or executed. Network strings are references, not contact.")
-    result.note("Scope: immediate standard startup directories; unit drop-ins, activation links, cron scripts, shell profiles, other users' homes and modern managed login items are not resolved. Permissions and local filesystem redirections can leave gaps.")
+    result.note("Saved configuration, shell input and text logs only: no commands or referenced programs were opened or executed. Network strings are references, not contact.")
+    result.note("Scope: standard startup files, one-level unit overrides, cron scripts, shell profiles/history and readable current text logs. Links are not followed; masked units and aliases of inspected files are not gaps. Activation, effective overrides, custom shell locations, binary journals, rotated logs, other users' homes and managed login items are not resolved. Permissions and local filesystem redirections can leave gaps.")
     return result

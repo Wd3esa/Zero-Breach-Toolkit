@@ -28,11 +28,11 @@ Made by **archivegenocide**. Built on [Zero Breach](https://github.com/interplai
 
 | Where | What it looks for |
 |---|---|
-| Browsers: Chrome, Edge, Brave, Vivaldi, Chromium, Firefox | spyware addresses in history, cookies, connection records, site storage and caches, per browser profile |
-| Desktop apps with a built-in Chromium browser, discovered under AppData | supported history, cookie and storage records; raw app web caches are skipped and reported as a gap |
+| Browsers: Chrome, Edge, Brave, Vivaldi, Chromium, Firefox | spyware addresses in supported history, cookies, connection records, bookmarks, site storage and caches, per browser profile |
+| Desktop apps with a built-in Chromium browser, discovered under AppData (Windows), Application Support (macOS) or the user and Flatpak configuration folders (Linux) | supported history, cookie and storage records; raw app web caches are skipped and reported as a gap |
 | Downloaded files | the website each file came from (the "Mark of the Web" Windows stamps on downloads) |
 | The Win+R box | commands people were tricked into pasting by fake "verify you are human" pages |
-| Microsoft Defender's history | threats it caught, protection being switched off, folders excluded from scanning |
+| Antivirus status and Microsoft Defender's history | registered antivirus products and their reported status; historical Defender detections, protection-off events and added exclusions |
 | PowerShell's log | scripts that named a spyware address, or downloaded and ran code |
 | Programs listed by Windows | existing files named in the shim cache and Windows 11 launch list, compared with published sample fingerprints; these are not a complete execution history |
 | Prefetch and Amcache | supported Prefetch executable-name records and Amcache file inventory; referenced program files are never opened by these readers |
@@ -42,6 +42,13 @@ Made by **archivegenocide**. Built on [Zero Breach](https://github.com/interplai
 Prefetch name matches use `execution-record` evidence: they do not identify the file's
 contents or establish its full path. Amcache matches use `inventory-record`: inventory
 does not prove execution or that the file still exists. Locked or unsupported records are gaps.
+
+On Windows, antivirus status comes from Windows Security Center, including third-party
+products such as Bitdefender when registered there. An active registered product puts an
+old Defender-off event in context; that event is not a claim that protection is currently
+off. Registration is not an independent health test, and some enterprise products do not
+register. Unavailable status is reported as a gap. Listing a desktop app such as Slack
+means its local web records are being checked, not that the app is suspicious.
 
 Computer checks can find published infrastructure or file traces; they cannot determine
 whether a phone is infected. The default hash check covers `.dll`, `.exe`, `.sys`, `.ocx`,
@@ -65,10 +72,14 @@ drives, folders and arbitrary files, subject to the same size and access limits.
 It recognises the collection's own traces (USB debugging, the debugging shell's
 permissions) and never reports them as suspicious.
 
-**Linux and macOS:** supported Chromium-family and Firefox profiles, file fingerprints,
-and bounded startup configuration checks run without requiring administrator access.
-Linux checks standard autostart `.desktop` entries, systemd `.service` files and readable
-cron configuration. macOS checks standard LaunchAgent and LaunchDaemon property lists.
+**Linux and macOS:** supported Chromium-family and Firefox profiles, separate browser
+cache locations, file fingerprints and bounded saved-record checks run without requiring
+administrator access. macOS also reads supported Safari history and profile databases.
+Linux checks standard autostart `.desktop` entries, systemd units and immediate `.conf`
+overrides, cron configuration and scheduled script directories. macOS checks standard
+LaunchAgent and LaunchDaemon property lists. Both check standard shell startup files,
+saved Bash/Zsh/fish history and readable current text system logs. Large history/log files
+are limited to recent records, with the omitted older records reported as a gap.
 These inspect saved configuration; they do not determine which jobs are enabled or ran.
 Network strings remain references. Exact known executable paths in supported launch
 configuration can be findings, with activation and execution explicitly unverified.
@@ -143,8 +154,8 @@ python -c "import hashlib; print(hashlib.sha256(open('dist/zero-breach-triage.py
 ```
 
 The size and SHA-256 published with each release are authoritative. At the time of writing
-the build is **790,748 bytes**, SHA-256
-`951e60c0f75fd9a6108e2395994f3c4f53f4044ab3c64e8a4631f9b58b8abf7e`. Two consecutive rebuilds
+the build is **839,391 bytes**, SHA-256
+`b2dab09a5793d0b456fca7a9601cea52ca6bf04fcbe21cfd016e808e62400cb5`. Two consecutive rebuilds
 produce that same file. A rebuild that matches tells you the published file contains
 this source and nothing else.
 
@@ -210,8 +221,11 @@ Run `--phone-guide ios`, then select a local Finder, Apple Devices or iTunes bac
 containing `Manifest.plist` and `Manifest.db`. Use `--phone FOLDER --preview` before scanning
 with `--phone FOLDER`. Add `--backup-password` for encrypted backups. Encryption requires the
 optional `cryptography` Python package already installed in your environment; nothing is
-installed automatically. The supported version is cryptography 46.0.5. To install that optional
-dependency in your chosen Python environment, run `python -m pip install -r requirements-backups.txt`.
+installed automatically. The supported version is cryptography 50.0.2, which needs Python 3.9 or
+later; Intel Macs get 48.0.1, the last release published for them (its remaining advisories
+concern certificate checking, which this tool does not use). To install that optional dependency in your chosen Python environment, run
+`python -m pip install --require-hashes -r requirements-backups.txt`; every package in that file is
+pinned by version and hash.
 
 The reader checks supported SMS (including selected encoded bodies), Safari profiles,
 data-usage processes, application records and optional Chrome/Firefox history. Additional

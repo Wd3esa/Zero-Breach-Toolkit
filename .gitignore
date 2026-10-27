@@ -28,3 +28,6 @@ __pycache__/
 /dist/*.exe
 /build/pyinstaller/
 
+
+# Signed release files (uploaded to a GitHub release, not committed)
+/release/

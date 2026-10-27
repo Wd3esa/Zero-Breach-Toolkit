@@ -121,6 +121,8 @@ def _ia_artifact_kind(domain, path, kind):
         return "messages-extra"
     if (kind != "backup" or "safari" in domain.lower() or domain == "HomeDomain") and base == "BrowserState.db":
         return "browser-state"
+    if (kind != "backup" or "safari" in domain.lower() or domain == "HomeDomain") and base == "Bookmarks.db":
+        return "safari-bookmarks"
     if base == "observations.db" and ("webkit" in low or "resourceloadstatistics" in low):
         return "webkit-statistics"
     if base == "Cache.db":
@@ -231,6 +233,7 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
 
     def sql_artifact(key, kind, check):
         layouts = {
+            "safari-bookmarks": ("bookmarks", ("url",), ()),
             "browser-state": ("tabs", ("url",), ("title",)),
             "webkit-statistics": ("observed_domains", ("registrableDomain",), ("lastSeen",)),
             "url-cache": ("cfurl_cache_response", ("request_key",), ("time_stamp",)),

@@ -19,7 +19,7 @@ import tempfile
 import time
 
 from .backupcrypto import backup_cbc, backup_ios_keys, backup_ios_file_key
-from .localpaths import path_problem, local_temp_dir
+from .localpaths import local_temp_dir, open_evidence_db, path_problem
 
 _IS_FILE_LIMIT = 256 * 1024 * 1024
 _IS_TOTAL_LIMIT = 1024 * 1024 * 1024
@@ -146,6 +146,7 @@ class IosEvidenceSource:
         self.gap, self.emit, self.read_file = gap, emit, read
         self.query, self.tables, self.unarchive = query, tables, unarchive
         self.tmp, self.connections, self.entries = None, [], []
+        self.database_serial = 0
         self.index, self.keys, self.encrypted = None, {}, False
         self.total, self.provenance, self.cached = 0, {}, {}
         self.inventory_complete = False
@@ -282,7 +283,7 @@ class IosEvidenceSource:
                 stream = stack.enter_context(gzip.GzipFile(fileobj=disk)) if magic == b"\x1f\x8b" else disk
                 limited = _IsLimitedStream(stream)
                 with tarfile.open(fileobj=limited, mode="r|", tarinfo=_IsTarInfo) as archive:
-                    seen = set()
+                    seen = {}
                     for n, entry in enumerate(archive):
                         # Streaming tarfile still keeps every header it has read;
                         # with maximum-length names that grew to ~0.8 GB inside
@@ -295,20 +296,27 @@ class IosEvidenceSource:
                         while name.startswith("./"):
                             name = name[2:]
                         try:
-                            _is_safe_parts(name.rstrip("/"))
-                            if entry.isdir():
-                                continue
-                            if not entry.isfile() or entry.sparse:
-                                raise ValueError("links, sparse and special archive entries are refused")
+                            name = name.rstrip("/")
+                            _is_safe_parts(name)
                             name_key = hashlib.sha256(name.encode("utf-8", "surrogatepass")).digest()
                             if name_key in seen:
+                                # Repeated directory headers are harmless, but a
+                                # path with different types has no unambiguous
+                                # payload. Refused links still reserve the name.
+                                if seen[name_key] and entry.isdir():
+                                    continue
+                                seen[name_key] = False
                                 key = ("", name)
                                 self.cached.pop(key, None)
                                 self.provenance.pop(key, None)
                                 if key in self.entries:
                                     self.entries.remove(key)
                                 raise ValueError("duplicate archive member")
-                            seen.add(name_key)
+                            seen[name_key] = entry.isdir()
+                            if entry.isdir():
+                                continue
+                            if not entry.isfile() or entry.sparse:
+                                raise ValueError("links, sparse and special archive entries are refused")
                             if not _is_archive_candidate(name):
                                 continue
                             if entry.size > _IS_FILE_LIMIT or self.total + entry.size > _IS_TOTAL_LIMIT:
@@ -403,7 +411,10 @@ class IosEvidenceSource:
     def database(self, raw, check, wal=b""):
         if not raw.startswith(b"SQLite format 3\0"):
             raise ValueError("artifact is not a readable SQLite database")
-        dest = os.path.join(self.tmp, "db-" + str(len(self.connections)))
+        # Reserve a new name even if writing or opening this copy fails. A
+        # partial copy must not prevent a later artifact from being opened.
+        dest = os.path.join(self.tmp, "db-" + str(self.database_serial))
+        self.database_serial += 1
         with open(dest, "xb") as fh:
             fh.write(raw)
         prefix, issues = _is_wal_prefix(wal, raw)
@@ -412,14 +423,8 @@ class IosEvidenceSource:
         if prefix:
             with open(dest + "-wal", "xb") as fh:
                 fh.write(prefix)
-        con = sqlite3.connect(dest)
+        con = open_evidence_db(dest)
         self.connections.append(con)
-        con.execute("PRAGMA trusted_schema=OFF")
-        con.execute("PRAGMA query_only=ON")
-        if hasattr(con, "setlimit"):
-            con.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 2 * 1024 * 1024)
-            con.setlimit(sqlite3.SQLITE_LIMIT_COLUMN, 256)
-            con.setlimit(sqlite3.SQLITE_LIMIT_EXPR_DEPTH, 100)
         return con
 
     def close(self):

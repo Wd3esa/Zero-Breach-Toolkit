@@ -209,7 +209,9 @@ def test_bundle_posix_reader_matches_source(monkeypatch, tmp_path, bundle):
 
 @pytest.mark.parametrize("command", ["'/fixture/program'", "/fixture/program %Q",
                                     "/fixture/program %f", "/fixture/program; /bin/true"])
-def test_desktop_shell_syntax_and_substitutions_are_reference_gaps(monkeypatch, tmp_path, bundle, command):
+def test_desktop_shell_syntax_and_substitutions_are_references_with_a_note(monkeypatch, tmp_path, bundle, command):
+    # The whole entry is searched, so unexpanded launch syntax is not a coverage
+    # gap; it only means no program is graded as configured to start.
     (tmp_path / "fixture.desktop").write_text("[Desktop Entry]\nType=Application\nExec=" + command)
     indicator = Indicator("/fixture/program", "artifact", "primary", "file-path", "fixture")
     for module, reader in ((posix, posix.run), (bundle, bundle.run_posix)):
@@ -217,7 +219,8 @@ def test_desktop_shell_syntax_and_substitutions_are_reference_gaps(monkeypatch, 
         result = reader(_px_context([indicator]))
         assert result.checked == 1
         assert [hit.evidence for hit in result.hits] == ["referenced"]
-        assert any(not check.ran for check in result.checks)
+        assert all(check.ran for check in result.checks)
+        assert any("does not expand" in note and "fixture.desktop" in note for note in result.notes)
 
 
 def test_entry_cap_keeps_prior_findings_source_and_bundle(monkeypatch, tmp_path, bundle):

@@ -27,6 +27,7 @@ PARTIAL/UNKNOWN with those gaps named, never to CLEAN.
 from __future__ import annotations
 
 import base64
+import contextlib
 import datetime
 import hashlib
 import io
@@ -35,12 +36,14 @@ import os
 import re
 import shutil
 import sqlite3
+import stat
 import sys
 import tempfile
 import time
 from urllib.parse import urlsplit
 from ..ios_sources import _is_wal_prefix
-from ..localpaths import local_temp_dir, path_problem, walk_local
+from ..localpaths import (WALK_LINK_REFUSED, WALK_SPECIAL_REFUSED, local_temp_dir, open_evidence_db,
+                          path_problem, walk_local)
 
 from ..result import (Hit, Lead, ModuleResult, EV_ON_DISK, EV_PERSISTENCE,
                       EV_CONTACTED, EV_ATTEMPTED, EV_CONFIGURED, EV_REFERENCED)
@@ -111,6 +114,66 @@ def _chromium_roots():
 CHROMIUM_ROOTS = _chromium_roots()
 _DEFAULT_CHROMIUM_ROOTS = CHROMIUM_ROOTS
 
+
+def _browser_below(path, base):
+    """Path components of path strictly below base, or None (no resolution)."""
+    try:
+        relative = os.path.relpath(path, base)
+    except ValueError:
+        return None
+    if (relative in (os.curdir, os.pardir) or relative.startswith(os.pardir + os.sep)
+            or os.path.isabs(relative)):
+        return None
+    return relative.split(os.sep)
+
+
+def _browser_cache_profile(profile):
+    """Map a profile to Chromium's platform cache location without resolving it."""
+    home = os.path.expanduser("~")
+    if sys.platform.startswith("linux"):
+        # Flatpak gives each app its own configuration and cache folders
+        # (~/.var/app/<app>/config and .../cache); snap packages keep theirs
+        # under ~/snap/<app>/common and its .cache folder.
+        parts = _browser_below(profile, os.path.join(home, ".var", "app"))
+        if parts and len(parts) > 2 and parts[1] == "config":
+            return os.path.normpath(os.path.join(home, ".var", "app", parts[0], "cache", *parts[2:]))
+        parts = _browser_below(profile, os.path.join(home, "snap"))
+        if parts and len(parts) > 2 and parts[1] == "common" and parts[2] != ".cache":
+            return os.path.normpath(os.path.join(home, "snap", parts[0], "common", ".cache", *parts[2:]))
+        config = os.environ.get("XDG_CONFIG_HOME", "")
+        cache = os.environ.get("XDG_CACHE_HOME", "")
+        config = config if os.path.isabs(config) else os.path.join(home, ".config")
+        cache = cache if os.path.isabs(cache) else os.path.join(home, ".cache")
+    elif sys.platform == "darwin":
+        config = os.path.join(home, "Library", "Application Support")
+        cache = os.path.join(home, "Library", "Caches")
+    else:
+        return profile
+    try:
+        relative = os.path.relpath(profile, config)
+    except ValueError:
+        return profile
+    if relative == os.pardir or relative.startswith(os.pardir + os.sep) or os.path.isabs(relative):
+        return profile
+    return os.path.normpath(os.path.join(cache, relative))
+
+
+def _browser_cache_in_scope(path, targets):
+    if not targets:
+        return True
+    for target in targets:
+        # Explicit browser databases select their profile, but never a cache
+        # elsewhere in the user's home directory.
+        base = os.path.abspath(target)
+        if os.path.isfile(base):
+            base = os.path.dirname(base) if os.path.basename(base).lower() in _TARGET_DB_FILES else base
+        try:
+            if os.path.commonpath((os.path.abspath(path), base)) == base:
+                return True
+        except ValueError:
+            continue
+    return False
+
 # Desktop apps with a built-in Chromium browser (Slack, Teams, Discord, WhatsApp,
 # VS Code, Opera, Steam's store...). A link clicked or previewed inside them
 # leaves the same cookies, cache and storage a browser does. None = discover at
@@ -122,7 +185,7 @@ _APP_MAX_DEPTH = 6
 _APP_SKIP = {"temp", "node_modules", ".git", "__pycache__", "crashdumps", "inetcache",
              "d3dscache", "cache", "cache_data", "code cache", "gpucache", "logs"}
 _APP_GENERIC = {"microsoft", "google", "programs"}
-_PROFILE_MARKERS = (("History",), ("Network", "Cookies"), ("Cookies",), ("Local Storage", "leveldb"))
+_PROFILE_MARKERS = (("History",), ("History.db",), ("Bookmarks",), ("Network", "Cookies"), ("Cookies",), ("Local Storage", "leveldb"))
 
 
 def _looks_like_profile(path):
@@ -135,7 +198,7 @@ def _looks_like_profile(path):
 # A person selecting "the browser folder" rarely picks the exact profile: the
 # browser's own folder, the History file or Firefox's Profiles folder are just
 # as likely. Each of those used to be silently skipped, which read as clean.
-_TARGET_DB_FILES = {"history", "cookies", "favicons", "web data", "network persistent state",
+_TARGET_DB_FILES = {"history", "history.db", "bookmarks", "cookies", "favicons", "web data", "network persistent state",
                     "transportsecurity", "places.sqlite", "cookies.sqlite", "favicons.sqlite"}
 _TARGET_SEARCH_DEPTH = 6
 _TARGET_SEARCH_ENTRIES = 20000
@@ -219,19 +282,65 @@ def _app_label(base, path, taken):
     return label
 
 
-def _app_roots():
-    """(label, path) for every Chromium data folder under AppData that is not one
-    of the browsers above. Found by what a folder CONTAINS ('Local State' plus a
-    profile), not by a list of app names, so apps nobody listed are covered."""
-    if sys.platform != "win32":
-        return []
+# Folders the operating system itself locks and that never hold an app's web
+# data: unreadable as an ordinary user on a healthy machine, so they are not a
+# coverage gap. Apple's own com.apple.* data under Application Support is
+# skipped for the same reason (much of it is privacy-protected).
+_APP_OS_LOCKED = {"elevateddiagnostics"}
+_APP_MAC_SKIP = {"mobilesync", "addressbook", "callhistorydb", "callhistorytransactions",
+                 "knowledge", "facetime", "fileprovider", "clouddocs"}
+
+
+def _app_bases():
+    """Where desktop apps keep their Chromium data on this platform."""
+    home = os.path.expanduser("~")
+    if sys.platform == "win32":
+        return [ROAMING, LOCAL]
+    if sys.platform == "darwin":
+        return [os.path.join(home, "Library", "Application Support")]
+    if sys.platform.startswith("linux"):
+        cfg = os.environ.get("XDG_CONFIG_HOME", "")
+        cfg = cfg if os.path.isabs(cfg) else os.path.join(home, ".config")
+        bases = [cfg]
+        # Each Flatpak app has its own configuration folder.
+        flatpak = os.path.join(home, ".var", "app")
+        try:
+            if not path_problem(flatpak) and os.path.isdir(flatpak):
+                with os.scandir(flatpak) as entries:
+                    bases += sorted(os.path.join(entry.path, "config") for entry in entries
+                                    if entry.is_dir(follow_symlinks=False))
+        except OSError:
+            bases.append(flatpak)  # reported as unreadable by the walk below
+        return bases
+    return []
+
+
+def _app_roots(gaps=None):
+    """(label, path) for every Chromium data folder in the platform's app data
+    folders that is not one of the browsers above. Found by what a folder
+    CONTAINS ('Local State' plus a profile), not by a list of app names, so apps
+    nobody listed are covered. Folders that could not be read are appended to
+    gaps (when given) as one reason: an unreadable folder may hold an app."""
     known = {os.path.normcase(os.path.abspath(p)) for _l, p in CHROMIUM_ROOTS}
-    found, taken = [], set()
-    for base in (ROAMING, LOCAL):
-        if not base or path_problem(base) or not os.path.isdir(base):
+    found, taken, unreadable = [], set(), []
+
+    def onerror(exc):
+        if isinstance(exc, PermissionError) and exc.strerror in (WALK_LINK_REFUSED, WALK_SPECIAL_REFUSED):
+            return  # links and special entries are never followed, by design
+        name = os.path.basename(str(getattr(exc, "filename", "") or "")).lower()
+        if name in _APP_OS_LOCKED:
+            return
+        unreadable.append(str(getattr(exc, "filename", "") or exc))
+
+    for base in _app_bases():
+        if not base or not os.path.lexists(base):
+            continue
+        if path_problem(base) or not os.path.isdir(base):
+            if path_problem(base):
+                unreadable.append(base)
             continue
         base_depth = os.path.abspath(base).rstrip("\\/").count(os.sep)
-        for dirpath, dirs, files in walk_local(base, onerror=lambda _exc: None):
+        for dirpath, dirs, files in walk_local(base, onerror=onerror):
             if os.path.normcase(os.path.abspath(dirpath)) in known:
                 dirs[:] = []
                 continue
@@ -240,8 +349,15 @@ def _app_roots():
                 dirs[:] = []
                 continue
             depth = dirpath.count(os.sep) - base_depth
+            if depth == 0 and sys.platform == "darwin":
+                dirs[:] = [d for d in dirs if not d.lower().startswith("com.apple.")
+                           and d.lower() not in _APP_MAC_SKIP]
             dirs[:] = [d for d in dirs
                        if depth < _APP_MAX_DEPTH and d.lower() not in _APP_SKIP]
+    if unreadable and gaps is not None:
+        gaps.append("desktop app discovery: {} folder(s) could not be read, so web records "
+                    "of a chat or other desktop app stored there were not checked (for "
+                    "example {})".format(len(unreadable), unreadable[0]))
     return found
 
 # Firefox (profiles_dir, cache_dir) pairs. None means "derive from the platform
@@ -498,6 +614,12 @@ def _is_ff_profile_dir(path):
         except FileNotFoundError:
             continue
     return False
+
+
+def _browser_safari_roots():
+    if sys.platform != "darwin":
+        return []
+    return [("safari", os.path.join(os.path.expanduser("~"), "Library", "Safari"))]
 
 
 def _fmt_time(conv, raw):
@@ -903,7 +1025,7 @@ def run(ctx) -> ModuleResult:
             mark_fail(label, kind, note)
             return None
         try:
-            con = sqlite3.connect(tmp)
+            con = open_evidence_db(tmp)
         except sqlite3.Error as exc:
             if not _discard_snapshot(os.path.dirname(tmp)):
                 exc.snapshot_leftover = os.path.dirname(tmp)
@@ -930,6 +1052,117 @@ def run(ctx) -> ModuleResult:
     def _count_db():
         r.submetrics["sqlite"] += 1
         r.checked += 1
+
+    def scan_bookmarks(label, path):
+        kind = "bookmarks"
+        try:
+            problem = path_problem(path)
+            if problem:
+                raise OSError(problem)
+            before = os.lstat(path)
+            if not stat.S_ISREG(before.st_mode) or before.st_size > 16 * 1024 * 1024:
+                raise ValueError("bookmark file is not regular or exceeds the byte limit")
+            flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+            with os.fdopen(os.open(path, flags), "rb") as stream:
+                opened = os.fstat(stream.fileno())
+                if (not stat.S_ISREG(opened.st_mode)
+                        or (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino)
+                        or path_problem(path)):
+                    raise ValueError("bookmark file changed before reading")
+                raw = stream.read(16 * 1024 * 1024 + 1)
+                after = os.fstat(stream.fileno())
+                if (opened.st_size, opened.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                    raise ValueError("bookmark file changed while reading")
+            if len(raw) > 16 * 1024 * 1024:
+                raise ValueError("bookmark byte limit reached")
+            doc = json.loads(raw)
+            if not isinstance(doc, dict) or not isinstance(doc.get("roots"), dict):
+                raise ValueError("unsupported bookmark roots")
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError, UnicodeError, RecursionError) as exc:
+            mark_fail(label, kind, "bookmark file unreadable or unsupported: " + type(exc).__name__)
+            return
+        pending = [(node, 0) for node in doc["roots"].values()]
+        count = 0
+        while pending:
+            node, depth = pending.pop()
+            count += 1
+            if count > 100000:
+                mark_fail(label, kind, "bookmark entry limit reached")
+                break
+            if depth > 32 or not isinstance(node, dict):
+                mark_fail(label, kind, "unsupported bookmark entry or nesting")
+                continue
+            if node.get("type") == "folder" and isinstance(node.get("children"), list):
+                pending.extend((child, depth + 1) for child in node["children"])
+            elif node.get("type") == "url" and isinstance(node.get("url"), str):
+                for ind in ctx.iocs.most_specific(ctx.iocs.search(node["url"].lower())):
+                    record_hit(path, ind, "Saved bookmark URL; a bookmark does not establish a visit or contact.")
+                r.checked += 1
+            else:
+                mark_fail(label, kind, "unsupported bookmark entry")
+        mark_ok(label, kind)
+
+    def scan_safari_history(label, path):
+        kind = "safari-history"
+        opened = open_db(path, label, kind)
+        if opened is None:
+            return
+        con, tmp = opened
+        try:
+            items, byte_count = {}, 0
+            with contextlib.closing(con.execute("SELECT id,url FROM history_items")) as rows:
+                for n, (item_id, url) in enumerate(rows):
+                    if n >= 200000:
+                        raise ValueError("Safari item count limit reached")
+                    if type(item_id) is not int or item_id <= 0 or not isinstance(url, str):
+                        mark_fail(label, kind, "unsupported Safari item identity or URL")
+                        continue
+                    byte_count += len(url.encode("utf-8", "replace"))
+                    if byte_count > 16 * 1024 * 1024:
+                        raise ValueError("Safari URL byte limit reached")
+                    if item_id in items:
+                        items[item_id] = None
+                        mark_fail(label, kind, "ambiguous Safari item identity; its visits were not interpreted")
+                    else:
+                        items[item_id] = url
+            columns = {row[1] for row in con.execute("PRAGMA table_info(history_visits)")}
+            origin = "origin" if "origin" in columns else "NULL"
+            success = "load_successful" if "load_successful" in columns else "NULL"
+            query = "SELECT history_item,visit_time," + origin + "," + success + " FROM history_visits"
+            with contextlib.closing(con.execute(query)) as rows:
+                for n, (item_id, when, origin, success) in enumerate(rows):
+                    history_rows[0] = True
+                    if n >= 200000:
+                        mark_fail(label, kind, "Safari visit count limit reached")
+                        break
+                    url = items.get(item_id) if type(item_id) is int else None
+                    if url is None:
+                        mark_fail(label, kind, "Safari visit has an unavailable or ambiguous URL")
+                        continue
+                    grade = EV_REFERENCED
+                    if type(origin) is not int or origin not in (0, 1) or type(success) is not int or success not in (0, 1):
+                        mark_fail(label, kind, "unsupported Safari origin or load status; record retained as reference")
+                    elif origin == 0:
+                        grade = EV_CONTACTED if success else EV_ATTEMPTED
+                    observed = ""
+                    try:
+                        if type(when) not in (int, float):
+                            raise ValueError("unsupported visit timestamp")
+                        observed = datetime.datetime.fromtimestamp(when + 978307200).isoformat(timespec="seconds")
+                    except (ValueError, OverflowError, OSError):
+                        mark_fail(label, kind, "unsupported Safari visit timestamp")
+                    for ind, evidence in _browser_url_evidence(url, ctx.iocs, grade):
+                        record_hit(path, ind, "Safari visit record; synced/unknown origins remain references; execution is unverified.", evidence, observed)
+                    r.checked += 1
+            mark_ok(label, kind)
+            _count_db()
+        except (sqlite3.Error, ValueError, TypeError) as exc:
+            mark_fail(label, kind, "Safari history unreadable or unsupported: " + str(exc))
+        finally:
+            if not _discard_snapshot(os.path.dirname(tmp), con):
+                mark_fail(label, kind, "temporary Safari snapshot cleanup failed")
 
     def scan_history(label, path, flavour):
         """History / moz_places, host-graded.
@@ -1566,10 +1799,20 @@ def run(ctx) -> ModuleResult:
     elif APP_ROOTS is not None:
         app_roots = list(APP_ROOTS)
     elif CHROMIUM_ROOTS is _DEFAULT_CHROMIUM_ROOTS:
-        app_roots = _app_roots()
+        discovery_gaps = []
+        app_roots = _app_roots(discovery_gaps)
+        for reason in discovery_gaps:
+            r.could_not_run("app-discovery", reason)
     else:
         app_roots = []
     chromium_roots = list(CHROMIUM_ROOTS)
+    if not ctx.targets and CHROMIUM_ROOTS is _DEFAULT_CHROMIUM_ROOTS:
+        for label, root in _browser_safari_roots():
+            chromium_roots.append((label, root))
+            profiles, _, gaps = _browser_targeted_roots(os.path.join(root, "Profiles"))
+            chromium_roots.extend((label, profile) for profile in profiles)
+            for reason in gaps:
+                r.could_not_run("browser", reason)
     if ctx.targets:
         app_roots, chromium_roots, ff_roots = [], [], []
         for selected in ctx.targets:
@@ -1580,6 +1823,8 @@ def run(ctx) -> ModuleResult:
             for reason in search_gaps:
                 r.could_not_run("browser", reason)
     r.submetrics["desktop_apps_found"] = len(app_roots)
+    if app_roots:
+        r.note("Checking web traces stored by desktop apps, including chat apps. Listing an app means its local records are being checked; it is not a finding against that app.")
     if not chromium_roots and not ff_roots and not app_roots:
         if ctx.targets:
             # Nothing to read is not the same as read and clean.
@@ -1606,8 +1851,9 @@ def run(ctx) -> ModuleResult:
             # One bad ACL on the user-data root must not abort the whole module.
             r.could_not_run(label + ":profiles", _locked_note(root, exc))
             continue
-        if not profs and _looks_like_profile(root):
-            profs = [root]     # a desktop app: its data folder IS the profile
+        if _looks_like_profile(root):
+            # Safari can keep its main history alongside a Profiles directory.
+            profs.insert(0, root)
         names = _chromium_profile_names(root)
         ctx.emit("[*] {} ({} profile(s))".format(root, len(profs)))
         for prof in profs:
@@ -1624,6 +1870,8 @@ def run(ctx) -> ModuleResult:
             current["name"] = ("{} ({})".format(display, folder) if display
                                else folder)
             ctx.emit("[*]   profile: {}".format(current["name"]))
+            scan_bookmarks(label, os.path.join(prof, "Bookmarks"))
+            scan_safari_history(label, os.path.join(prof, "History.db"))
             scan_history(label, os.path.join(prof, "History"), "chromium")
             scan_cookies(label, os.path.join(prof, "Network", "Cookies"),
                          "chromium")
@@ -1643,7 +1891,13 @@ def run(ctx) -> ModuleResult:
                         and sub[0] in ("Cache", "Code Cache")):
                     app_caches_skipped.append(os.path.join(prof, *sub))
                     continue
-                scan_blobs(label, os.path.join(prof, *sub), evidence)
+                blob_roots = [prof]
+                if sub[0] in ("Cache", "Code Cache"):
+                    cache_profile = _browser_cache_profile(prof)
+                    if cache_profile != prof and _browser_cache_in_scope(cache_profile, ctx.targets):
+                        blob_roots.append(cache_profile)
+                for blob_root in blob_roots:
+                    scan_blobs(label, os.path.join(blob_root, *sub), evidence)
 
     _report_app_caches_skipped(r, app_caches_skipped)
 

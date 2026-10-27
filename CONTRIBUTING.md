@@ -5,19 +5,34 @@ strict. They are what keep it trustworthy.
 
 ## Running the tests
 
-The default scanner uses the standard library. Install pytest to run the complete test
-suite; optional engine/backup fixtures require their separately pinned dependencies.
+The default scanner uses the standard library. The test tools are pinned by version and
+hash; install them before running the complete suite (Python 3.8 and 3.9 use the second
+file, because current pytest needs 3.10 or later). The Windows executable's build tools are
+pinned the same way in `build/requirements-build.txt`.
 
 ```
+python -m pip install --require-hashes -r build/requirements-test.txt          # Python 3.10+
+python -m pip install --require-hashes -r build/requirements-test-legacy.txt   # 3.8/3.9 only
 cd scan && python -m pytest -q
 ```
 
-Every change must keep the suite green. New behaviour needs a test.
+Optional engine/backup fixtures require their separately pinned dependencies
+(`requirements-patterns.txt`, `requirements-backups.txt`, both Python 3.9+). Every push and
+pull request runs the suite, the release gate and a reproducibility check on Windows, Linux
+and macOS (`.github/workflows/tests.yml`). Every change must keep the suite green. New
+behaviour needs a test.
 
-Before publishing, run `python tools/release_check.py --require-patterns` in
-the virtual environment with the pinned optional engine installed. This builds
+Before publishing, run `python tools/release_check.py --require-patterns --require-backups` in
+the virtual environment with the pinned pattern and backup dependencies installed. This builds
 and tests the download against controlled fixtures without scanning your own
 browser profiles.
+
+For a website release, add `--require-web --web-dir PATH_TO_SCAN_PAGE`. To verify
+a separately saved public download too, add `--downloaded-scanner DOWNLOADED_FILE`;
+the gate hashes that file without executing it. Use `--scanner dist/zero-breach-triage.py`
+to verify the staged local download. Website checks must not be skipped when publishing
+the page or its download instructions. Then build, sign and verify the release files with
+`python tools/make_release.py` (see docs/VERIFYING.md).
 
 ## Rebuilding the generated files
 

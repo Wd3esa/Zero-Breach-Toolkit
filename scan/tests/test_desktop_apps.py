@@ -83,8 +83,12 @@ class TestDiscovery(unittest.TestCase):
         self.assertTrue(found["app:msteams"].endswith("EBWebView"))
         self.assertNotIn(self.chrome, found.values())
 
-    def test_not_windows_finds_nothing(self):
-        with patch.object(browser.sys, "platform", "linux"):
+    def test_linux_without_app_folders_finds_nothing(self):
+        # Linux and macOS discovery is covered in test_discovery_and_fingerprint_gaps.py.
+        home = tempfile.mkdtemp(prefix="home_")
+        with patch.object(browser.sys, "platform", "linux"), \
+                patch.object(browser.os.path, "expanduser", lambda _v: home), \
+                patch.dict(os.environ, {"XDG_CONFIG_HOME": ""}):
             self.assertEqual(browser._app_roots(), [])
 
 
