@@ -2,6 +2,9 @@
 
 ## 0.1.1 (2026-10-27)
 
+The project is now called Zero Breach Toolkit: the repository is `Zero-Breach-Toolkit` and
+the single file is `zero-breach-toolkit.py`. Old links redirect.
+
 iPhone
 - Encrypted backups from real devices are read correctly. Files whose recorded size
   differs from the copied data (live databases) and iCloud-only files no longer fail.

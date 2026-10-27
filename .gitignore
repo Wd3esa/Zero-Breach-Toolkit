@@ -21,8 +21,8 @@ __pycache__/
 
 
 # single-file build output (Zero Breach Toolkit)
-/zero-breach-triage.py
-/dist/zero-breach-triage.py
+/zero-breach-toolkit.py
+/dist/zero-breach-toolkit.py
 
 # Windows program build output
 /dist/*.exe

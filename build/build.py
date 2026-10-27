@@ -5,13 +5,13 @@ This is the single command that turns iocs/adfection_iocs.txt into everything
 that ships: the STIX and MISP feeds, the DNS/ad blocklists, the indicator
 checksum, and the single-file build. It is deterministic - run it on a fresh
 checkout and you get byte-identical output - which is what lets anyone verify
-that the published zero-breach-triage.py was built from exactly this source.
+that the published zero-breach-toolkit.py was built from exactly this source.
 
 Usage:
     python build/build.py            # regenerate dist/ and the standalone
     python build/build.py --check    # also fail if anything is now out of date
 
-The standalone is written to dist/zero-breach-triage.py. Its SHA-256 is printed at the
+The standalone is written to dist/zero-breach-toolkit.py. Its SHA-256 is printed at the
 end; that is the value to publish in the release notes so people can verify their
 download.
 """
@@ -28,7 +28,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 IOC = os.path.join(ROOT, "iocs", "adfection_iocs.txt")
 DIST = os.path.join(ROOT, "dist")
-STANDALONE = os.path.join(DIST, "zero-breach-triage.py")
+STANDALONE = os.path.join(DIST, "zero-breach-toolkit.py")
 
 
 def _run(script, *args):

@@ -4,6 +4,8 @@ and update requests carry a generic user agent."""
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from zbtriage import feeds
@@ -49,6 +51,7 @@ def test_every_list_format_drops_shared_services(tmp_path):
         assert values == {"real-bad.example"}, (fmt, values)
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell module path is Windows-only")
 def test_powershell_loads_only_windows_modules():
     env = host.powershell_env()
     assert env["PSModulePath"].endswith(os.path.join("System32", "WindowsPowerShell", "v1.0", "Modules"))

@@ -32,7 +32,7 @@ repository source, so you can regenerate it from the release's tag and compare:
 
     git checkout v0.1.1
     python build/bundle.py
-    sha256sum dist/zero-breach-triage.py
+    sha256sum dist/zero-breach-toolkit.py
 
 If the hash matches the one published with the release, that file holds this source and
 nothing else. The build is deterministic, so a mismatch means something is wrong, not

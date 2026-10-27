@@ -1,6 +1,6 @@
-"""Build the Windows program: dist/zero-breach-triage.exe.
+"""Build the Windows program: dist/zero-breach-toolkit.exe.
 
-Packages the single-file build (dist/zero-breach-triage.py, made by
+Packages the single-file build (dist/zero-breach-toolkit.py, made by
 build/bundle.py) with PyInstaller. Run with the pinned build environment:
 
     build\\.venv\\Scripts\\python.exe build\\build_exe.py
@@ -25,7 +25,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-SOURCE = os.path.join(ROOT, "dist", "zero-breach-triage.py")
+SOURCE = os.path.join(ROOT, "dist", "zero-breach-toolkit.py")
 WORK = os.path.join(HERE, "pyinstaller")
 PRODUCT = "Zero Breach Toolkit"
 
@@ -50,9 +50,9 @@ def version_file(ver):
       StringStruct('CompanyName', 'Zero Breach'),
       StringStruct('FileDescription', '{product} - spyware indicator check'),
       StringStruct('FileVersion', '{ver}'),
-      StringStruct('InternalName', 'zero-breach-triage'),
+      StringStruct('InternalName', 'zero-breach-toolkit'),
       StringStruct('LegalCopyright', 'Apache License 2.0'),
-      StringStruct('OriginalFilename', 'zero-breach-triage.exe'),
+      StringStruct('OriginalFilename', 'zero-breach-toolkit.exe'),
       StringStruct('ProductName', '{product}'),
       StringStruct('ProductVersion', '{ver}')])]),
     VarFileInfo([VarStruct('Translation', [1033, 1200])])
@@ -67,13 +67,13 @@ def main():
         sys.exit("missing {} - run build/bundle.py first".format(SOURCE))
     ver = version()
     cmd = [sys.executable, "-m", "PyInstaller", "--onefile", "--console", "--noupx",
-           "--clean", "--noconfirm", "--name", "zero-breach-triage",
+           "--clean", "--noconfirm", "--name", "zero-breach-toolkit",
            "--version-file", version_file(ver),
            "--distpath", os.path.join(ROOT, "dist"), "--workpath", WORK,
            "--specpath", WORK, SOURCE]
     print("building version", ver)
     subprocess.run(cmd, check=True)
-    exe = os.path.join(ROOT, "dist", "zero-breach-triage.exe")
+    exe = os.path.join(ROOT, "dist", "zero-breach-toolkit.exe")
     print("wrote {} ({:,} bytes)".format(exe, os.path.getsize(exe)))
 
 

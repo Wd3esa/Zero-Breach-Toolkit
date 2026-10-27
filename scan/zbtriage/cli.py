@@ -1,6 +1,6 @@
 """Command-line entry point and orchestration.
 
-  zero-breach-triage [--quick] [--json <path>] [--share-json <path>] [--iocs <path>]
+  zero-breach-toolkit [--quick] [--json <path>] [--share-json <path>] [--iocs <path>]
 
 Default behaviour (no flags): read-only tier-1 IOC match across the browser, hash
 and host modules, under the no-network guard. Requires no administrator (D7).
@@ -78,7 +78,7 @@ def _default_ioc_paths() -> List[str]:
 
 def _parse(argv: List[str]) -> argparse.Namespace:
     p = WorkflowParser(
-        prog="zero-breach-triage",
+        prog="zero-breach-toolkit",
         description="Local, read-only check for known mercenary spyware indicators. "
                     "A clean result is NOT a clean bill of health.")
     p.add_argument("--quick", action="store_true",

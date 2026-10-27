@@ -24,7 +24,7 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RELEASE_KEY = "C24EC92B12D6670A2516065F9B4D575499AFA53C"
-SCANNER = "zero-breach-triage.py"
+SCANNER = "zero-breach-toolkit.py"
 PUBLIC_KEY = "archivegenocide-signing-key.asc"
 
 

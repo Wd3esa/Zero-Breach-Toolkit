@@ -56,7 +56,7 @@ echo ========================================================================
 echo.
 
 rem Keep stdout visible for acquisition prompts and the post-scan workflow.
-%PY% -X utf8 zero-breach-triage.py --json "%JSON%" --report "%TXT%"
+%PY% -X utf8 zero-breach-toolkit.py --json "%JSON%" --report "%TXT%"
 set "RC=%errorlevel%"
 
 echo.

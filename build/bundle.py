@@ -21,7 +21,7 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = sys.argv[1] if len(sys.argv) > 1 else ROOT
 OUT = (sys.argv[2] if len(sys.argv) > 2
-       else os.path.join(SRC, "dist", "zero-breach-triage.py"))
+       else os.path.join(SRC, "dist", "zero-breach-toolkit.py"))
 
 PKG = os.path.join(SRC, "scan", "zbtriage")
 import importlib.util
@@ -217,9 +217,9 @@ A('  NOT affiliated with, and NOT endorsed by, The Citizen Lab, Confiant,')
 A('  Recorded Future, Amnesty International or Access Now.')
 A('')
 A('USAGE')
-A('  python -X utf8 zero-breach-triage.py')
-A('  python -X utf8 zero-breach-triage.py --json report.json')
-A('  python -X utf8 zero-breach-triage.py --patterns   # optional YARA-X setup required')
+A('  python -X utf8 zero-breach-toolkit.py')
+A('  python -X utf8 zero-breach-toolkit.py --json report.json')
+A('  python -X utf8 zero-breach-toolkit.py --patterns   # optional YARA-X setup required')
 A('')
 A('Requires Python 3.8 or newer. Needs no administrator. All supported platforms')
 A('get browser and file checks; Windows also gets host checks.')
@@ -356,7 +356,7 @@ def _force_utf8_io():
 def _bundle_main(argv=None):
     _force_utf8_io()
     p = WorkflowParser(
-        prog="zero-breach-triage",
+        prog="zero-breach-toolkit",
         description="Read-only check for known mercenary spyware "
                     "indicators. A clean result is NOT a clean bill of health.")
     p.add_argument("--json", metavar="PATH",

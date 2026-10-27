@@ -133,22 +133,22 @@ packages. On macOS and Linux type `python3` instead of `python`.
 
 1. **Get the toolkit.** On GitHub choose **Code → Download ZIP** and extract it, or:
    ```
-   git clone https://github.com/interplains/Zero-Breach-Triage-Toolkit.git
+   git clone https://github.com/interplains/Zero-Breach-Toolkit.git
    ```
 2. **Open a terminal in the toolkit folder.** Windows: open the extracted
-   folder (`Zero-Breach-Triage-Toolkit`, or `Zero-Breach-Triage-Toolkit-main` from a ZIP), click the address bar, type `powershell` and press
+   folder (`Zero-Breach-Toolkit`, or `Zero-Breach-Toolkit-main` from a ZIP), click the address bar, type `powershell` and press
    Enter. macOS: open Terminal, type `cd ` (with a space), drag the folder into the window
    and press Enter. Run every command below from this folder.
 3. **Recommended: download the latest indicator lists.** This is optional and is the only
    step that uses the internet; the checks themselves never do. Without it only a small
    built-in set is used. Repeat it every few weeks.
    ```
-   python -X utf8 scan/zero-breach-triage.py --update
+   python -X utf8 scan/zero-breach-toolkit.py --update
    ```
 4. **Close your browsers and chat apps**, then run the check. A menu opens; press Enter for
    the standard check of this computer.
    ```
-   python -X utf8 scan/zero-breach-triage.py
+   python -X utf8 scan/zero-breach-toolkit.py
    ```
    On Windows you can instead double-click `scan\run-scan.cmd`. It saves the readable and
    JSON reports in a `findings` folder next to the toolkit.
@@ -157,10 +157,10 @@ Reports contain private details from your computer; keep them out of shared and 
 folders. Useful options:
 
 ```
-python -X utf8 scan/zero-breach-triage.py --quick                     # faster: skips file fingerprints
-python -X utf8 scan/zero-breach-triage.py --phone "FOLDER"            # a phone collection or backup
-python -X utf8 scan/zero-breach-triage.py --json report.json          # machine-readable report
-python -X utf8 scan/zero-breach-triage.py --share-json summary.json   # minimal summary for sharing
+python -X utf8 scan/zero-breach-toolkit.py --quick                     # faster: skips file fingerprints
+python -X utf8 scan/zero-breach-toolkit.py --phone "FOLDER"            # a phone collection or backup
+python -X utf8 scan/zero-breach-toolkit.py --json report.json          # machine-readable report
+python -X utf8 scan/zero-breach-toolkit.py --share-json summary.json   # minimal summary for sharing
 ```
 
 Put folder paths in quotes, especially if they contain spaces. On Linux or macOS,
@@ -174,17 +174,17 @@ you can reproduce.
 Running from source, as above, means every line the tool executes is in the clone: nothing
 is compiled and nothing is fetched in order to run.
 
-The single-file `zero-breach-triage.py` attached to a release is generated from the same
+The single-file `zero-breach-toolkit.py` attached to a release is generated from the same
 source. Rebuild it from the release's tag and compare:
 
 ```
 git checkout v0.1.1
 python build/bundle.py
-python -c "import hashlib; print(hashlib.sha256(open('dist/zero-breach-triage.py','rb').read()).hexdigest())"
+python -c "import hashlib; print(hashlib.sha256(open('dist/zero-breach-toolkit.py','rb').read()).hexdigest())"
 ```
 
-For v0.1.1 the file is 895,200 bytes, SHA-256
-`d3d98cadfcdb979ee6f8a0e05b6601f5e75805b25a1c38f87b8a2907b6ef7bc0`. The size and SHA-256
+For v0.1.1 the file is 895,192 bytes, SHA-256
+`a47bc9d03f0e7d6d9990dbaab956447c11cdcafb209a963f05d6d293335a7946`. The size and SHA-256
 published with each release are authoritative. The build is deterministic, so a matching
 rebuild means the published file contains that source and nothing else. Releases are also
 GPG-signed; see [docs/VERIFYING.md](docs/VERIFYING.md).
@@ -216,7 +216,7 @@ not apply. Running from source avoids all of that.
 4. AndroidQF saves a `.zip` next to itself. Extract it.
 5. From the toolkit folder, check the extracted folder (keep the quotes):
    ```
-   python -X utf8 scan/zero-breach-triage.py --phone "PATH TO THE EXTRACTED FOLDER"
+   python -X utf8 scan/zero-breach-toolkit.py --phone "PATH TO THE EXTRACTED FOLDER"
    ```
    Or run the tool with no options, choose *A phone*, and drag the folder into the window.
 6. Turn USB debugging off again.
@@ -268,7 +268,7 @@ reported folder: original or partial records are kept and may be unencrypted.
 3. From the toolkit folder (keep the quotes; leave out `--backup-password` if the backup
    is not encrypted, and the password is asked for privately):
    ```
-   python -X utf8 scan/zero-breach-triage.py --phone "PATH TO THE BACKUP FOLDER" --backup-password
+   python -X utf8 scan/zero-breach-toolkit.py --phone "PATH TO THE BACKUP FOLDER" --backup-password
    ```
 
 `--phone-guide ios` and `--phone-guide android` print these steps in the terminal.
@@ -357,7 +357,7 @@ report, readable report, minimal sharing summary and an integrity manifest. Repe
 files to copy, and nothing is uploaded or sent to a helpline.
 
 ```text
-python scan/zero-breach-triage.py --scan-type targeted --target SUSPICIOUS_FILE --report report.txt --json report.json --evidence-bundle evidence.zip --evidence-file SUSPICIOUS_FILE
+python scan/zero-breach-toolkit.py --scan-type targeted --target SUSPICIOUS_FILE --report report.txt --json report.json --evidence-bundle evidence.zip --evidence-file SUSPICIOUS_FILE
 ```
 
 `SUSPICIOUS_FILE` is the path of one file; `--evidence-file` takes files, not folders.
@@ -426,8 +426,8 @@ report that marks the fields to relay to the person, the next steps that may be 
 which fields hold untrusted text from the scanned machine. See
 [scan/CONTRACT.md](scan/CONTRACT.md).
 
-A [skill file](skills/zero-breach-triage/SKILL.md) is included for assistants that support
-skills: add the `skills/zero-breach-triage` folder to the assistant's skill directory, or
+A [skill file](skills/zero-breach-toolkit/SKILL.md) is included for assistants that support
+skills: add the `skills/zero-breach-toolkit` folder to the assistant's skill directory, or
 have it read that file. It covers scope selection, encrypted-backup prompts, offline
 operation, report interpretation and evidence privacy. Nothing is installed automatically.
 
