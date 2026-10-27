@@ -251,7 +251,7 @@ class TestIocFreshness(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _age(self, days):
-        when = datetime.datetime.utcnow() - datetime.timedelta(days=days)
+        when = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None) - datetime.timedelta(days=days)
         with open(self.path, "w", encoding="utf-8") as fh:
             fh.write("# as-of: {}\nfearevolve.com\tdelivery\tprimary\n".format(
                 when.strftime("%Y-%m-%d")))

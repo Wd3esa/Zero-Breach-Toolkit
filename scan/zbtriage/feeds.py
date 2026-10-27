@@ -364,7 +364,7 @@ def update(cache: Optional[str] = None, sources: Optional[List[Dict[str, str]]] 
                 raise IocError("got a web page, not an indicator file")
             digest = _feed_sha256(data)
             old = manifest.get(src["id"])
-            checked = datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+            checked = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).replace(microsecond=0).isoformat() + "Z"
             intact = False
             if isinstance(old, dict) and old.get("file") == name and old.get("sha256") == digest:
                 try:
@@ -399,7 +399,7 @@ def update(cache: Optional[str] = None, sources: Optional[List[Dict[str, str]]] 
                 "file": name, "url": src["url"], "format": src["format"],
                 "name": src["name"], "cite": src["cite"], "category": src["category"],
                 "family": src.get("family", ""), "sha256": digest, "bytes": len(data),
-                "fetched_utc": datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+                "fetched_utc": datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).replace(microsecond=0).isoformat() + "Z",
                 "checked_utc": checked,
                 "indicators": len(parsed)}
             # Record each replaced file at once: an interrupted update then
@@ -466,7 +466,7 @@ def cached_sets(cache: Optional[str] = None) -> Tuple[List[IocSet], Dict[str, ob
             refreshed = meta.get("checked_utc") or meta.get("fetched_utc")
             try:
                 when = datetime.datetime.strptime(refreshed, "%Y-%m-%dT%H:%M:%SZ")
-                if when > datetime.datetime.utcnow():
+                if when > datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None):
                     raise ValueError("future refresh time")
                 loaded.verified_at = when
             except (TypeError, ValueError):

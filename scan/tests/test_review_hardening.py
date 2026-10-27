@@ -25,7 +25,7 @@ from test_feeds import SRC, STIX_OK, fake_fetch
 def review_set():
     result = IocSet([Indicator("review.invalid", "infrastructure", "primary", "domain",
                                "synthetic")], "synthetic", 9999999999)
-    result.asof = datetime.datetime.utcnow().strftime("%Y-%m-%d")
+    result.asof = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).strftime("%Y-%m-%d")
     return result
 
 

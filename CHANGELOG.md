@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- No deprecation warnings on Python 3.12 and later (UTC timestamps).
+
 ## 0.1.3 (2026-10-27)
 
 - A report never replaces an existing file in a folder the hash check reads, including a

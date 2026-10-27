@@ -644,7 +644,7 @@ class IocSet:
         dates = [date for date in self._freshness_dates() if date is not None]
         if not dates:
             return None
-        now = now or datetime.datetime.utcnow()
+        now = now or datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
         delta = now - min(dates)
         return max(0, delta.days)
 
