@@ -1,12 +1,12 @@
 # Verifying a release
 
-No release of Zero Breach Toolkit has been published yet. When one is, it will be
-verifiable in two independent ways: a signature you can check against a key you already
-trust, and a build you can reproduce yourself. Use both.
+Releases are published on the project's GitHub Releases page, starting with v0.1.0. Each
+one is verifiable in two independent ways: a signature you can check against a key you
+already trust, and a build you can reproduce yourself. Use both.
 
 ## 1. The publisher's GPG signature
 
-Each release will carry detached GPG signatures for its files and for a `SHA256SUMS.txt`
+Each release carries detached GPG signatures for its files and for a `SHA256SUMS.txt`
 manifest, made with ArchiveGenocide's established Ed25519 release-signing key, the same
 key that signs the archive's other releases. Its full fingerprint is:
 
