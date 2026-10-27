@@ -127,39 +127,44 @@ set works offline; `--update` downloads the rest from a fixed list of official s
 
 ## Install and run
 
-You need Python 3.8 or newer ([python.org](https://www.python.org/downloads/)). No
-administrator rights and no extra packages. On macOS and Linux use `python3` instead of
-`python`.
+You need Python 3.8 or newer ([python.org](https://www.python.org/downloads/); on Windows,
+tick "Add python.exe to PATH" when installing). No administrator rights and no extra
+packages. On macOS and Linux type `python3` instead of `python`.
+
+1. **Get the toolkit.** On GitHub choose **Code → Download ZIP** and extract it, or:
+   ```
+   git clone https://github.com/interplains/Zero-Breach-Triage-Toolkit.git
+   ```
+2. **Open a terminal in the toolkit folder.** Windows: open the extracted
+   folder (`Zero-Breach-Triage-Toolkit`, or `Zero-Breach-Triage-Toolkit-main` from a ZIP), click the address bar, type `powershell` and press
+   Enter. macOS: open Terminal, type `cd ` (with a space), drag the folder into the window
+   and press Enter. Run every command below from this folder.
+3. **Recommended: download the latest indicator lists.** This is optional and is the only
+   step that uses the internet; the checks themselves never do. Without it only a small
+   built-in set is used. Repeat it every few weeks.
+   ```
+   python -X utf8 scan/zero-breach-triage.py --update
+   ```
+4. **Close your browsers and chat apps**, then run the check. A menu opens; press Enter for
+   the standard check of this computer.
+   ```
+   python -X utf8 scan/zero-breach-triage.py
+   ```
+   On Windows you can instead double-click `scan\run-scan.cmd`. It saves the readable and
+   JSON reports in a `findings` folder next to the toolkit.
+
+Reports contain private details from your computer; keep them out of shared and synced
+folders. Useful options:
 
 ```
-git clone https://github.com/interplains/Zero-Breach-Triage-Toolkit.git
-cd Zero-Breach-Triage-Toolkit
+python -X utf8 scan/zero-breach-triage.py --quick                     # faster: skips file fingerprints
+python -X utf8 scan/zero-breach-triage.py --phone "FOLDER"            # a phone collection or backup
+python -X utf8 scan/zero-breach-triage.py --json report.json          # machine-readable report
+python -X utf8 scan/zero-breach-triage.py --share-json summary.json   # minimal summary for sharing
 ```
 
-Without git, use **Code → Download ZIP** on GitHub and extract it. On Windows you can then
-double-click `scan\run-scan.cmd`: it opens the start menu and saves the readable and JSON
-reports in a `findings` folder next to the toolkit. Those reports contain private details
-from your computer; keep them out of shared and synced folders.
-
-```
-python -X utf8 scan/zero-breach-triage.py --update        # download published indicators (separate network step)
-python -X utf8 scan/zero-breach-triage.py                 # check this computer
-python -X utf8 scan/zero-breach-triage.py --quick         # faster: skips file fingerprinting
-python -X utf8 scan/zero-breach-triage.py --phone FOLDER  # check a phone collection or backup
-python -X utf8 scan/zero-breach-triage.py --json report.json
-python -X utf8 scan/zero-breach-triage.py --share-json summary.json  # minimal summary for sharing
-```
-
-On Linux or macOS, the terminal launcher takes the same options:
-
-```sh
-sh scan/run-scan.sh
-sh scan/run-scan.sh --quick
-```
-
-Run `--update` first and again every few weeks; new indicators are published regularly.
-Close your browsers and chat apps before scanning. Open apps lock some of their files, and
-the report lists the ones it could not read.
+Put folder paths in quotes, especially if they contain spaces. On Linux or macOS,
+`sh scan/run-scan.sh` takes the same options.
 
 ### Verify what you run
 
@@ -178,8 +183,8 @@ python build/bundle.py
 python -c "import hashlib; print(hashlib.sha256(open('dist/zero-breach-triage.py','rb').read()).hexdigest())"
 ```
 
-For v0.1.1 the file is 889,552 bytes, SHA-256
-`9fd12ae3da31f404563666c4936e132b26ae5e8ba95229ea9fd27011518f73f7`. The size and SHA-256
+For v0.1.1 the file is 895,200 bytes, SHA-256
+`d3d98cadfcdb979ee6f8a0e05b6601f5e75805b25a1c38f87b8a2907b6ef7bc0`. The size and SHA-256
 published with each release are authoritative. The build is deterministic, so a matching
 rebuild means the published file contains that source and nothing else. Releases are also
 GPG-signed; see [docs/VERIFYING.md](docs/VERIFYING.md).
@@ -192,11 +197,29 @@ not apply. Running from source avoids all of that.
 
 ### Checking an Android phone
 
-1. Install [AndroidQF](https://github.com/mvt-project/androidqf/releases) on your computer.
-2. On the phone, turn on *Developer options* and *USB debugging*, connect it, and accept the prompt.
-3. Run AndroidQF. Current releases write a ZIP archive; extract it locally and find the folder containing `packages.json`. Older collections may already be folders.
-4. Run `python -X utf8 scan/zero-breach-triage.py --phone <that folder>`.
-5. Turn USB debugging off again and revoke the computer's authorisation.
+1. On the phone, turn on *Developer options* (Settings → About phone → tap *Build number*
+   seven times), then turn on *USB debugging*.
+2. Connect the phone by USB and tap *Allow* when it asks about this computer.
+3. Download and run [AndroidQF](https://github.com/mvt-project/androidqf/releases) on the
+   computer. Answer its questions like this:
+
+   | AndroidQF asks | Answer |
+   |---|---|
+   | Take a backup of the device? | Only SMS |
+   | Download copies of all apps or only non-system ones? | Only non-system packages |
+   | Remove copies of apps signed with a trusted certificate? | No |
+   | Take the Intrusion Logs? | No, unless you turned on Intrusion Logging |
+   | Hash files on the device? | No |
+   | Browser history / Magisk modules? | No |
+
+   On the phone, confirm the backup with *Back up my data*.
+4. AndroidQF saves a `.zip` next to itself. Extract it.
+5. From the toolkit folder, check the extracted folder (keep the quotes):
+   ```
+   python -X utf8 scan/zero-breach-triage.py --phone "PATH TO THE EXTRACTED FOLDER"
+   ```
+   Or run the tool with no options, choose *A phone*, and drag the folder into the window.
+6. Turn USB debugging off again.
 
 The collection holds private information about the phone. Keep it on your computer.
 
@@ -237,9 +260,18 @@ reported folder: original or partial records are kept and may be unencrypted.
 
 ### Checking local iPhone evidence (experimental)
 
-Run `--phone-guide ios`, then select a local Finder, Apple Devices or iTunes backup folder
-containing `Manifest.plist` and `Manifest.db`. Use `--phone FOLDER --preview` before scanning
-with `--phone FOLDER`. Add `--backup-password` for encrypted backups.
+1. Make a local backup with Finder (Mac) or Apple Devices / iTunes (Windows). Tick
+   *Encrypt local backup*: encrypted backups include more of the records this tool checks.
+2. Find the backup folder (one per device, with `Manifest.plist` inside): on a Mac
+   `~/Library/Application Support/MobileSync/Backup/`, on Windows
+   `%USERPROFILE%\Apple\MobileSync\Backup\`.
+3. From the toolkit folder (keep the quotes; leave out `--backup-password` if the backup
+   is not encrypted, and the password is asked for privately):
+   ```
+   python -X utf8 scan/zero-breach-triage.py --phone "PATH TO THE BACKUP FOLDER" --backup-password
+   ```
+
+`--phone-guide ios` and `--phone-guide android` print these steps in the terminal.
 
 Encrypted backups need the optional `cryptography` package already installed in your Python
 environment; nothing is installed automatically. Install it with

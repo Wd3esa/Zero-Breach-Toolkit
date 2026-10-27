@@ -121,3 +121,35 @@ def test_damaged_safari_cookie_file_is_a_gap(tmp_path, monkeypatch, safety_api):
     result = _run(safety_api, monkeypatch, root)
     assert any(not c.ran and "safari-cookies" in c.name for c in result.checks)
     assert not any(h.indicator == "cookie.invalid" for h in result.hits)
+
+
+def test_repeated_download_url_keeps_each_records_grade(tmp_path, monkeypatch, safety_api):
+    root = _safari(tmp_path)
+    (root / "Downloads.plist").write_bytes(plistlib.dumps({"DownloadHistory": [
+        {"DownloadEntryURL": "https://got.invalid/a.pkg", "DownloadEntryProgressBytesSoFar": 1024},
+        {"DownloadEntryURL": "https://got.invalid/a.pkg", "DownloadEntryProgressBytesSoFar": 0}]}))
+    result = _run(safety_api, monkeypatch, root)
+    grades = sorted(h.evidence for h in result.hits if h.indicator == "got.invalid")
+    assert grades == ["attempted", "contacted"]
+
+
+def test_report_cannot_replace_safari_sandbox_files(tmp_path, monkeypatch, safety_api):
+    import argparse
+    from zbtriage import workflow
+    root = _safari(tmp_path)
+    tabs = tmp_path / "Library" / "Containers" / "com.apple.Safari" / "Data" / "Library" / "Safari" / "CloudTabs.db"
+    cookies = tmp_path / "Library" / "Cookies" / "Cookies.binarycookies"
+    cookies.parent.mkdir(parents=True)
+    cookies.write_bytes(b"cook")
+    api = safety_api.browser
+    monkeypatch.setattr(api, "_browser_safari_roots", lambda: [("safari", str(root))])
+    from zbtriage.modules import browser as source_browser
+    monkeypatch.setattr(source_browser, "_browser_safari_roots", lambda: [("safari", str(root))])
+    guard = getattr(safety_api.entry, "workflow_output_guard", None) or workflow.workflow_output_guard
+    for target in (tabs, cookies):
+        args = argparse.Namespace(iocs=[], target=[], evidence_file=[], pattern_path=[], collect_android=None,
+                                  phone=None, json=str(target), share_json=None, report=None)
+        before = target.read_bytes()
+        with pytest.raises(ValueError):
+            guard(args, str(target))
+        assert target.read_bytes() == before

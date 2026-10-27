@@ -297,3 +297,19 @@ class TestHermeticTestsStubEveryModule(unittest.TestCase):
         for filename in ("test_pattern_integration.py", "test_bundle_release.py"):
             source = open(os.path.join(here, "tests", filename), encoding="utf-8").read()
             self.assertIn("stub_registered_readers(stack", source)
+
+
+class OneCheckFailing(unittest.TestCase):
+    """An unexpected error in one check is a gap for that check only."""
+
+    def test_failing_check_is_a_gap_and_later_checks_still_run(self):
+        def boom(*a):
+            raise RuntimeError("unexpected layout")
+
+        with patch.object(traces, "_tr_check_runbox", boom):
+            r = run(events={PSL: [{"Id": 4104, "Message": "iwr https://" + BAD + "/x"}]})
+        gaps = {c.name: c.reason for c in r.checks if not c.ran}
+        self.assertIn("run-history", gaps)
+        self.assertIn("RuntimeError", gaps["run-history"])
+        self.assertTrue(any(c.name == "powershell-history" for c in r.checks))
+        self.assertTrue(any(c.name == "ran-programs" for c in r.checks))

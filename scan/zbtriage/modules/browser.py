@@ -1062,7 +1062,10 @@ def chromium_profiles(user_data):
     out = []
     for name in os.listdir(user_data):
         p = os.path.join(user_data, name)
-        if name == "Default" or name == "Guest Profile" or name.startswith("Profile"):
+        # Default, Profile N, Guest Profile, System Profile, and any folder
+        # named with --profile-directory: a profile always has Preferences.
+        if (name == "Default" or name == "Guest Profile" or name.startswith("Profile")
+                or os.path.isfile(os.path.join(p, "Preferences"))):
             out.append(p)
     return out
 
@@ -1449,24 +1452,29 @@ def run(ctx) -> ModuleResult:
             if doc is None:
                 continue
             try:
-                received = {}
                 if kind == "safari-downloads" and isinstance(doc, dict):
-                    # A download that received bytes contacted its host; one that
-                    # received none was only attempted.
-                    for entry in doc.get("DownloadHistory", []) or []:
-                        if isinstance(entry, dict) and isinstance(entry.get("DownloadEntryURL"), str):
-                            got = entry.get("DownloadEntryProgressBytesSoFar")
-                            received[entry["DownloadEntryURL"]] = type(got) is int and got > 0
+                    # Each download record is graded by its own bytes: one that
+                    # received data contacted its host, one that received none
+                    # was only attempted. A URL repeated across records keeps
+                    # every record's grade.
+                    history = doc.get("DownloadHistory")
+                    for entry in history if isinstance(history, list) else []:
+                        url = entry.get("DownloadEntryURL") if isinstance(entry, dict) else None
+                        if not isinstance(url, str):
+                            continue
+                        got = entry.get("DownloadEntryProgressBytesSoFar")
+                        grade = EV_CONTACTED if type(got) is int and got > 0 else EV_ATTEMPTED
+                        for ind, evidence in _browser_url_evidence(url, ctx.iocs, grade):
+                            record_hit(path, ind, what + "; contact is graded by the bytes received; "
+                                       "execution unverified", evidence)
+                        r.checked += 1
                 for key, value in _safari_plist_strings(doc):
+                    if key == "DownloadEntryURL" and kind == "safari-downloads":
+                        continue
                     if not value.lower().startswith(("http://", "https://")):
                         continue
-                    if value in received:
-                        grade = EV_CONTACTED if received[value] else EV_ATTEMPTED
-                        detail = what + "; contact is graded by the bytes received; execution unverified"
-                    else:
-                        grade, detail = EV_REFERENCED, what + "; a saved reference, not proof of a visit"
-                    for ind, evidence in _browser_url_evidence(value, ctx.iocs, grade):
-                        record_hit(path, ind, detail, evidence)
+                    for ind, evidence in _browser_url_evidence(value, ctx.iocs, EV_REFERENCED):
+                        record_hit(path, ind, what + "; a saved reference, not proof of a visit", evidence)
                     r.checked += 1
                 mark_ok(label, kind)
             except (ValueError, RecursionError) as exc:

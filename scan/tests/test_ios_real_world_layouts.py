@@ -287,3 +287,15 @@ def test_encrypted_backup_with_empty_payloads(tmp_path, reader):
     result = reader(ctx(root, password="owner-password"))
     assert any(h.indicator == PROCESS for h in result.hits)
     assert not any("damaged" in reason for reason in gaps(result).values())
+
+
+def test_malformed_connection_record_does_not_stop_later_artifacts(tmp_path, reader):
+    import json as _json
+    good = _json.dumps({"net": {"http_server_properties": {"servers": [{"server": "https://" + DOMAIN + ":443"}]}}})
+    bad = _json.dumps({"net": ["unexpected"]})
+    root = tmp_path / "backup"
+    backup(root, [("AppDomain-com.example.a", "Library/Application Support/A/Network Persistent State", bad.encode()),
+                  ("AppDomain-com.example.b", "Library/Application Support/B/Network Persistent State", good.encode())])
+    result = reader(ctx(root))
+    assert any(h.indicator == DOMAIN and h.evidence == "contacted" for h in result.hits)
+    assert "ios:browser-connections" in gaps(result)

@@ -428,7 +428,8 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
             doc = json.loads(source.artifact(*key).decode("utf-8"))
         except (UnicodeError, ValueError) as exc:
             raise ValueError("unsupported Network Persistent State: " + str(exc)[:80])
-        props = ((doc.get("net") or {}).get("http_server_properties") or {}) if isinstance(doc, dict) else {}
+        net = doc.get("net") if isinstance(doc, dict) else None
+        props = net.get("http_server_properties") if isinstance(net, dict) else None
         servers = props.get("servers") if isinstance(props, dict) else None
         if not isinstance(servers, list):
             raise ValueError("unsupported Network Persistent State layout")
@@ -783,7 +784,8 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
             else:
                 sql_artifact(key, kind, check)
             r.ran(check)
-        except (ValueError, OSError, sqlite3.Error, TypeError, plistlib.InvalidFileException, RecursionError) as exc:
+        except (ValueError, OSError, sqlite3.Error, TypeError, AttributeError, IndexError,
+                plistlib.InvalidFileException, RecursionError) as exc:
             r.skipped += 1
             gap(check, "artifact unreadable or unsupported: " + str(exc))
     if source.kind == "sysdiagnose" and not found:

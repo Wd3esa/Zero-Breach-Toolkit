@@ -49,7 +49,7 @@ import sys
 import re
 import subprocess
 
-from ..result import (Hit, ModuleResult, EV_DNS,
+from ..result import (Hit, ModuleResult, EV_DNS, EV_ATTEMPTED,
                       EV_PERSISTENCE, EV_CONFIGURED, EV_REFERENCED, EV_ON_DISK)
 
 NAME = "host"
@@ -73,6 +73,16 @@ _PS_EXE = os.path.join(os.environ.get("SystemRoot") or r"C:\Windows",
 # A directory the scanner does not control, used as the child's working
 # directory so it cannot inherit a hostile CWD either.
 _PS_CWD = os.environ.get("SystemRoot") or r"C:\Windows"
+def powershell_env():
+    """Environment for PowerShell: modules load only from Windows' own folder, so
+    a module installed in the user's profile cannot stand in for a built-in
+    command and forge results."""
+    env = dict(os.environ)
+    env["PSModulePath"] = os.path.join(os.environ.get("SystemRoot") or r"C:\Windows",
+                                       "System32", "WindowsPowerShell", "v1.0", "Modules")
+    return env
+
+
 _PS = [_PS_EXE, "-NoProfile", "-NonInteractive",
        "-ExecutionPolicy", "Bypass", "-Command"]
 
@@ -88,6 +98,24 @@ _DNS_EVENT_CAP = 50000
 # with" israeli spyware infrastructure would be a false alarm aimed at precisely
 # the people the tool is for.
 _SINK_ADDRESSES = {"0.0.0.0", "127.0.0.1", "::1", "::", "0:0:0:0:0:0:0:1"}
+
+
+def _dns_answer_blocked(message: str) -> bool:
+    """True when a DNS-Client event's results hold addresses and every one is a
+    block address (the form a hosts-file or DNS blocklist answers with)."""
+    low = (message or "").lower()
+    at = low.rfind("results")
+    if at < 0:
+        return False
+    addresses = []
+    for part in low[at + len("results"):].split(";"):
+        token = part.strip().strip(",.").strip()
+        try:
+            ipaddress.ip_address(token)
+        except ValueError:
+            continue
+        addresses.append(token)
+    return bool(addresses) and all(_is_sink(a) for a in addresses)
 
 
 def _is_sink(address: str) -> bool:
@@ -180,7 +208,7 @@ def _ps(cmd: str, timeout: int = 60):
     cmd = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; " + cmd
     proc = subprocess.run(_PS + [cmd], capture_output=True, text=True,
                           encoding="utf-8", errors="replace", timeout=timeout,
-                          cwd=_PS_CWD)
+                          cwd=_PS_CWD, env=powershell_env())
     return proc.returncode, (proc.stdout or ""), (proc.stderr or "")
 
 
@@ -794,8 +822,19 @@ def _check_dns_log(r: ModuleResult, ctx) -> None:
             r.reach["dns-log"]["how_to_enable"] = _HOW_TO_ENABLE
     for ev in events:
         when = _str(ev, "Time")
+        message = _str(ev, "Message")
+        # Same judgement as the resolver cache: a query answered only with
+        # block addresses was stopped by a filter, so it is an attempt.
+        if _dns_answer_blocked(message):
+            hits += _match(
+                r, ctx, message,
+                "{} @ {}".format(_DNS_LOG, when or "unknown time"),
+                "indicator {ioc} was looked up" + (" at " + when if when else "") +
+                " and answered with a block address, so a filter stopped it",
+                EV_ATTEMPTED, when)
+            continue
         hits += _match(
-            r, ctx, _str(ev, "Message"),
+            r, ctx, message,
             "{} @ {}".format(_DNS_LOG, when or "unknown time"),
             "indicator {ioc} appears as a name or address in a "
             "DNS-Client/Operational event" +

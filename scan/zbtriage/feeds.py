@@ -282,8 +282,8 @@ def _fetch(url: str) -> bytes:
     if not url_allowed(url):
         raise IocError("refused: not an allow-listed indicator source: {}".format(url))
     opener = urllib.request.build_opener(_AllowListRedirect())
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "zero-breach-triage/{} (indicator update)".format(__version__)})
+    # A generic label: the sources' servers need not learn that this is a spyware check.
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     with opener.open(req, timeout=TIMEOUT_S) as resp:
         data = resp.read(MAX_DOWNLOAD + 1)
     if len(data) > MAX_DOWNLOAD:
@@ -383,6 +383,14 @@ def update(cache: Optional[str] = None, sources: Optional[List[Dict[str, str]]] 
                 fh.write(data)
             try:
                 parsed = _load_source_file(src, tmp)    # parse BEFORE replacing
+                # A source that suddenly loses most of its indicators (a broken or
+                # tampered upstream file) must not silently make scans look clean:
+                # keep the previous copy and report why.
+                before = old.get("indicators") if isinstance(old, dict) else None
+                if type(before) is int and before > 0 and (
+                        len(parsed) == 0 or (before >= 20 and len(parsed) < before // 2)):
+                    raise IocError("indicator count fell from {} to {}; the previous copy was kept. "
+                                   "Check the source before trusting the new list".format(before, len(parsed)))
             except Exception:
                 os.unlink(tmp)
                 raise

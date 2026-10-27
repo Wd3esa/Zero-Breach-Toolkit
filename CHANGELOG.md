@@ -28,8 +28,23 @@ Android
 - Process lists from older AndroidQF versions, MMS text, and only received messages
   graded "received". Certificate coverage counts SHA-256 and SHA-1 separately.
 
-Reports
+Safety and reliability
+- `--update` refuses a list whose indicator count suddenly falls by more than half (or to
+  zero) and keeps the previous copy, so a broken or tampered source cannot quietly make
+  scans look clean. Update requests use a generic user agent.
+- PowerShell loads modules only from Windows' own folder.
+- On Windows, one check that fails no longer stops the others; it is listed as not checked.
+- A DNS-log lookup answered only with a block address is graded as a blocked attempt.
+- Repeated Safari downloads of the same address are graded per download. Reports cannot
+  overwrite Safari's sandbox or cookie files. Malformed iPhone connection data is a gap for
+  that file only.
+- Paths in colon- or comma-separated lists are matched on macOS and Linux; Chromium
+  profiles with custom folder names are found.
+
+Reports and guides
 - The summary counts each indicator once, with the number of places it was recorded.
+- Step-by-step phone guides (`--phone-guide android|ios`), including how to answer
+  AndroidQF's questions, and clearer install steps in the README.
 
 ## 0.1.0 (2026-10-27)
 

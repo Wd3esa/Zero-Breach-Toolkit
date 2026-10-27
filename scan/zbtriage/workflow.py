@@ -84,7 +84,11 @@ def workflow_output_guard(args, path, document=None):
         from .modules.posix import _ux_roots
         sources.extend(root for _, root, _ in _ux_roots())
         from .modules.browser import _browser_safari_roots
-        sources.extend(root for _, root in _browser_safari_roots())
+        for _, root in _browser_safari_roots():
+            # Safari also keeps tabs, cache, cookies and HSTS in its sandbox.
+            library = os.path.dirname(root)
+            sources.extend((root, os.path.join(library, "Containers", "com.apple.Safari"),
+                            os.path.join(library, "Cookies")))
         # Desktop apps (Slack, Signal...) keep browser records the scan reads
         # inside the platform's app data and app cache folders. Every app found
         # by its contents lies within them, so no existing file there may be

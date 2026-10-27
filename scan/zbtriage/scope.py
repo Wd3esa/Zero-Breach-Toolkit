@@ -113,25 +113,61 @@ def scope_preview(args):
 
 def scope_guide(platform):
     if platform == "android":
-        return ("Android preparation\n"
-                "Guided acquisition: --collect-android LOCAL_OUTPUT_FOLDER (separate download and consent step).\n"
-                "Or use the official AndroidQF release: https://github.com/mvt-project/androidqf/releases\n"
-                "With the device owner's consent, connect by USB, enable USB debugging and approve this computer on the phone.\n"
-                "Choose whether to include SMS during collection; confirm the backup on the phone. Acquisition changes device state.\n"
-                "Current AndroidQF produces a ZIP archive. Extract it locally and select the folder containing packages.json.\n"
-                "An age-encrypted .zip.age archive must first be decrypted with its owner's age identity using age.\n"
-                "Keep the archive and extracted private records on protected local storage.\n"
-                "Preview: --phone FOLDER --preview\n"
-                "Check: --phone FOLDER (add --backup-password for an AES-encrypted backup.ab).\n"
-                "Missing artifacts remain gaps. Disable USB debugging afterwards if you do not need it.\n")
-    return ("iPhone preparation\n"
-            "With the owner's consent, make a local Finder, Apple Devices or iTunes backup.\n"
-            "Encrypted local backups preserve more artifacts; keep the password privately.\n"
-            "Select the device backup folder containing Manifest.plist, Manifest.db and Info.plist.\n"
-            "Preview: --phone FOLDER --preview\n"
-            "Check: --phone FOLDER (add --backup-password if encrypted).\n"
-            "Already acquired filesystem: --phone ROOT --ios-input filesystem\n"
-            "Already acquired diagnostics: --phone PATH --ios-input sysdiagnose (directory or TAR/TAR.GZ).\n"
-            "Sources stay unchanged; database replay and decryption use temporary local copies, removed after the run.\n"
-            "Only supported backup records are checked; no live phone access or cloud download is performed.\n"
-            "See https://support.apple.com/108353 for Apple's local-backup instructions.\n")
+        return """Checking an Android phone - step by step
+
+ 1. On the phone: Settings > About phone, tap "Build number" seven times to turn on
+    Developer options. Then Settings > System > Developer options > turn on
+    "USB debugging".
+ 2. Connect the phone to this computer with a USB cable. On the phone, tap "Allow"
+    when it asks to allow USB debugging from this computer.
+ 3. Download AndroidQF for your computer from
+    https://github.com/mvt-project/androidqf/releases and run it.
+    (Or let this tool do it: --collect-android "OUTPUT FOLDER")
+ 4. AndroidQF asks a few questions. Answer:
+      Backup?                                  -> Only SMS
+      Download copies of all apps or ...?      -> Only non-system packages
+      Remove copies of apps signed with a
+      trusted certificate?                     -> No
+      Intrusion Logs?                          -> No (unless you turned on Intrusion
+                                                  Logging in Advanced Protection)
+      Hash files on the device?                -> No
+      Browser history / Magisk modules?        -> No
+    The phone will ask you to confirm the backup: tap "Back up my data"
+    (leave the password empty).
+ 5. When AndroidQF finishes, it leaves a .zip file next to itself. Unzip it.
+ 6. Check the unzipped folder. Run this from inside the Zero-Breach-Triage-Toolkit
+    folder, and keep the quotes around the folder path:
+      python -X utf8 scan/zero-breach-triage.py --phone "PATH TO THE UNZIPPED FOLDER"
+    Or open the menu (run the tool with no options), choose the phone check, and
+    drag the unzipped folder into the window.
+ 7. Afterwards, turn USB debugging off again on the phone.
+
+The collection holds private information about the phone: keep it on this computer.
+Things the collection did not include are listed in the report as not checked.
+"""
+    return """Checking an iPhone - step by step
+
+ 1. Make a local backup on a computer:
+      Mac: connect the iPhone, open Finder, select the iPhone, choose
+           "Back up all of the data on your iPhone to this Mac".
+      Windows: install Apple Devices (or iTunes), connect the iPhone, choose
+           "Back up all of the data on your iPhone to this computer".
+    Tick "Encrypt local backup" and choose a password you will remember:
+    encrypted backups include more of the records this tool checks.
+ 2. Find the backup folder (one folder per device, with Manifest.plist inside):
+      Mac:     ~/Library/Application Support/MobileSync/Backup/
+      Windows: %USERPROFILE%\\Apple\\MobileSync\\Backup\\
+               (older iTunes: %APPDATA%\\Apple Computer\\MobileSync\\Backup\\)
+ 3. Run this from inside the Zero-Breach-Triage-Toolkit folder, keeping the quotes:
+      python -X utf8 scan/zero-breach-triage.py --phone "PATH TO THE BACKUP FOLDER" --backup-password
+    Leave out --backup-password if the backup is not encrypted. The password is
+    asked for privately and never saved.
+    Or open the menu (run the tool with no options), choose the phone check, and
+    drag the backup folder into the window.
+
+Already have a file-system extraction or a sysdiagnose? Use
+  --phone "FOLDER" --ios-input filesystem
+  --phone "FOLDER OR .tar.gz" --ios-input sysdiagnose
+The backup is never changed; anything decrypted is a temporary copy removed after the
+check. Apple's backup help: https://support.apple.com/108353
+"""

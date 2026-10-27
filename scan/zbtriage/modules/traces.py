@@ -100,9 +100,10 @@ def _tr_ps_json(cmd, timeout=180):
     """Run PowerShell, parse its JSON. Returns (rows, error)."""
     cmd = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; " + cmd
     try:
+        from .host import powershell_env
         proc = subprocess.run(_TR_PS + [cmd], capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=timeout,
-                              cwd=_TR_PS_CWD)
+                              cwd=_TR_PS_CWD, env=powershell_env())
     except subprocess.TimeoutExpired:
         return [], "PowerShell timed out after {}s".format(timeout)
     except OSError as exc:
@@ -1100,17 +1101,32 @@ def run(ctx) -> ModuleResult:
             r.could_not_run("extended-process-events", "Windows-only records")
         return r
     leads = _TrLeads(r)
+
+    def isolated(checks, fn, *args):
+        """One failing check must not cost the others: an unexpected error is
+        reported as a gap for that check's records, and the rest still run."""
+        try:
+            return fn(*args)
+        except Exception as exc:  # noqa: BLE001
+            done = {c.name for c in r.checks}
+            for check in checks:
+                if check not in done:
+                    r.could_not_run(check, "stopped unexpectedly ({}: {}); these records "
+                                    "were not checked".format(type(exc).__name__, str(exc)[:160]))
+            return None
+
     ctx.emit("[*]   traces: files' download origins (Mark of the Web)")
-    _tr_check_motw(r, ctx)
+    isolated(("mark-of-the-web",), _tr_check_motw, r, ctx)
     ctx.emit("[*]   traces: Win+R history, Defender and PowerShell logs")
-    _tr_check_runbox(r, ctx, leads)
-    protection = _tr_check_antivirus(r, leads)
-    _tr_check_defender(r, ctx, leads, protection)
-    _tr_check_powershell(r, ctx, leads)
+    isolated(("run-history",), _tr_check_runbox, r, ctx, leads)
+    protection = isolated(("antivirus-status",), _tr_check_antivirus, r, leads)
+    isolated(("defender-history",), _tr_check_defender, r, ctx, leads, protection)
+    isolated(("powershell-history",), _tr_check_powershell, r, ctx, leads)
     ctx.emit("[*]   traces: fingerprinting files in compatibility and launch records")
-    _tr_check_ran_programs(r, ctx)
-    _tr_extra_history(r, ctx)
-    _tr_persistence(r, ctx)
-    _tr_extended(r, ctx)
+    isolated(("ran-programs",), _tr_check_ran_programs, r, ctx)
+    isolated(("psreadline-history", "explorer-typed-paths"), _tr_extra_history, r, ctx)
+    isolated(("startup-registrations", "service-registrations", "startup-files",
+              "scheduled-task-actions"), _tr_persistence, r, ctx)
+    isolated(("extended-process-events",) if ctx.extended_windows else (), _tr_extended, r, ctx)
     leads.finish()
     return r

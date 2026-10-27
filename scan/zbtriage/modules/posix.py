@@ -295,7 +295,7 @@ def _ux_match(result, ctx, path, text, programs, context="startup configuration"
         # substitution or separator ($(...), backticks, ;, |, &), not only a
         # space, quote or '='.
         matched_paths = configured_paths or [value for value in originals
-            if re.search(r"(?<![^\s\"'=(`;|&])" + re.escape(value) + r"(?=$|[\s\"';)`|&])", text)]
+            if re.search(r"(?<![^\s\"'=(`;|&:,])" + re.escape(value) + r"(?=$|[\s\"';)`|&:,])", text)]
         if not matched_paths:
             continue
         configured = bool(configured_paths)
