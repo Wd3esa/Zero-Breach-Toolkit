@@ -110,7 +110,7 @@ def workflow_output_guard(args, path, document=None):
                 except ValueError:
                     inside = False
                 if inside:
-                    raise ValueError("{} already exists in a folder this scan checks, so it was not "
+                    raise ValueError("{} is an existing file in a folder this scan checks, so it was not "
                                      "replaced; choose a new filename (for example add the date)".format(
                                          os.path.basename(output)))
         if os.path.lexists(output):
