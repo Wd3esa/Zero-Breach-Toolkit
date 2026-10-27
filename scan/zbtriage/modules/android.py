@@ -559,9 +559,11 @@ def _an_processes(r, ctx, folder):
         seen.add(app)
         ind = ctx.iocs.lookup_typed(TYPE_APP_ID, app)
         if ind:
+            before = len(r.hits)
             _an_hit(r, ind, "running process " + value,
                     "an app the researchers name was running")
-            r.hits[-1].artifact = source
+            if len(r.hits) > before:
+                r.hits[-1].artifact = source
 
     for filename in ("processes.json", "processes.txt"):
         path = os.path.join(folder, filename)

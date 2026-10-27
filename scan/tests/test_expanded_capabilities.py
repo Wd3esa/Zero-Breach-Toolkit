@@ -298,7 +298,7 @@ def ios_fixture(root, encrypted=False):
     con.execute("CREATE TABLE Files(fileID TEXT,domain TEXT,relativePath TEXT,flags INTEGER,file BLOB)")
     for n, (domain, relative, schema, insert, values) in enumerate([
         ("HomeDomain", "Library/SMS/sms.db", "CREATE TABLE message(text TEXT,date INTEGER,is_from_me INTEGER)", "INSERT INTO message VALUES(?,?,?)", ("https://" + BAD, 700000000000000000, 0)),
-        ("HomeDomain", "Library/Safari/History.db", "CREATE TABLE history_items(id INTEGER,url TEXT); CREATE TABLE history_visits(history_item INTEGER,visit_time INTEGER)", "INSERT INTO history_items VALUES(1,?)", ("https://innocent.invalid/?q=" + BAD,)),
+        ("HomeDomain", "Library/Safari/History.db", "CREATE TABLE history_items(id INTEGER,url TEXT); CREATE TABLE history_visits(history_item INTEGER,visit_time INTEGER,origin INTEGER DEFAULT 0)", "INSERT INTO history_items VALUES(1,?)", ("https://innocent.invalid/?q=" + BAD,)),
         ("WirelessDomain", "Library/Databases/DataUsage.sqlite", "CREATE TABLE ZPROCESS(ZPROCNAME TEXT)", "INSERT INTO ZPROCESS VALUES(?)", ("fixtureproc",)),
     ]):
         work = root / "fixture.db"
@@ -306,7 +306,7 @@ def ios_fixture(root, encrypted=False):
         db.executescript(schema)
         db.execute(insert, values)
         if n == 1:
-            db.execute("INSERT INTO history_visits VALUES(1,700000000)")
+            db.execute("INSERT INTO history_visits(history_item,visit_time) VALUES(1,700000000)")
         db.commit()
         db.close()
         raw = work.read_bytes()

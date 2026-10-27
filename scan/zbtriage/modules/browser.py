@@ -137,23 +137,26 @@ def _looks_like_profile(path):
 # as likely. Each of those used to be silently skipped, which read as clean.
 _TARGET_DB_FILES = {"history", "cookies", "favicons", "web data", "network persistent state",
                     "transportsecurity", "places.sqlite", "cookies.sqlite", "favicons.sqlite"}
-_TARGET_SEARCH_DEPTH = 4
+_TARGET_SEARCH_DEPTH = 6
 _TARGET_SEARCH_ENTRIES = 20000
 
 
 def _browser_targeted_roots(selected):
-    """(Chromium roots, Firefox profiles, capped) found in one selected target: the
+    """(Chromium roots, Firefox profiles, gaps) found in one selected target: the
     target itself, the profile holding a selected browser database file, or
     profiles a few folders down. Links and junctions are never followed; the
-    search stops descending once a folder is recognised as a browser profile."""
-    chromium, firefox = [], []
+    search stops descending once a folder is recognised as a browser profile.
+    Every place the search had to stop is returned as a gap, because a profile
+    below it was not checked - stopping silently would read as clean."""
+    chromium, firefox, gaps = [], [], []
     if path_problem(selected):
-        return chromium, firefox, False
+        return chromium, firefox, gaps
     if os.path.isfile(selected) and os.path.basename(selected).lower() in _TARGET_DB_FILES:
         selected = os.path.dirname(selected)
     if not os.path.isdir(selected):
-        return chromium, firefox, False
+        return chromium, firefox, gaps
     pending, seen = [(selected, 0)], 0
+    too_deep, unreadable, links = [], [], 0
     while pending:
         folder, depth = pending.pop()
         try:
@@ -164,20 +167,39 @@ def _browser_targeted_roots(selected):
                 chromium.append(folder)
                 continue
         except OSError:
-            continue
-        if depth >= _TARGET_SEARCH_DEPTH:
+            unreadable.append(folder)
             continue
         try:
             with os.scandir(folder) as entries:
                 for entry in entries:
                     seen += 1
                     if seen > _TARGET_SEARCH_ENTRIES:
-                        return chromium, firefox, True
-                    if entry.is_dir(follow_symlinks=False) and not path_problem(entry.path):
+                        gaps.append("browser profile search inside {} stopped at its entry "
+                                    "limit; profiles deeper in it were not checked".format(selected))
+                        return chromium, firefox, gaps
+                    if not entry.is_dir(follow_symlinks=False):
+                        if entry.is_symlink() or path_problem(entry.path):
+                            links += 1
+                        continue
+                    if path_problem(entry.path):
+                        links += 1
+                    elif depth >= _TARGET_SEARCH_DEPTH:
+                        too_deep.append(entry.path)
+                    else:
                         pending.append((entry.path, depth + 1))
         except OSError:
-            continue
-    return chromium, firefox, False
+            unreadable.append(folder)
+    if too_deep:
+        gaps.append("browser profile search inside {} stops {} folders down; {} deeper folder(s) "
+                    "were not checked (for example {}) - select a deeper folder to include "
+                    "them".format(selected, _TARGET_SEARCH_DEPTH, len(too_deep), too_deep[0]))
+    if unreadable:
+        gaps.append("browser profile search inside {}: {} folder(s) could not be read (for "
+                    "example {})".format(selected, len(unreadable), unreadable[0]))
+    if links:
+        gaps.append("browser profile search inside {}: {} link(s) or junction(s) were not "
+                    "followed".format(selected, links))
+    return chromium, firefox, gaps
 
 
 def _app_label(base, path, taken):
@@ -290,9 +312,15 @@ def copy_locked(path):
     # unbounded write by a tool that promises it only reads - and then exhaust
     # memory when its rows are read. Checked before mkdtemp so a refusal never
     # leaves a temp directory behind; the caller records it as a gap.
+    # Each sibling is checked for links and reparse points BEFORE anything
+    # follows it (exists/getsize follow a redirected file to its destination,
+    # which could be a network share). An unsafe sibling is never touched; the
+    # copy loop below records it as missing from the snapshot.
+    safe_sidecars = [sfx for sfx in ("-wal", "-shm", "-journal")
+                     if not path_problem(path + sfx)]
     try:
         total = os.path.getsize(path) + sum(
-            os.path.getsize(path + sfx) for sfx in ("-wal", "-shm", "-journal")
+            os.path.getsize(path + sfx) for sfx in safe_sidecars
             if os.path.exists(path + sfx))
     except OSError:
         total = 0   # let the copy below surface the real error
@@ -1545,13 +1573,12 @@ def run(ctx) -> ModuleResult:
     if ctx.targets:
         app_roots, chromium_roots, ff_roots = [], [], []
         for selected in ctx.targets:
-            found_chromium, found_firefox, capped = _browser_targeted_roots(selected)
+            found_chromium, found_firefox, search_gaps = _browser_targeted_roots(selected)
             chromium_roots += [("selected", p) for p in found_chromium if ("selected", p) not in chromium_roots]
             ff_roots += [(p, os.path.join(p, "cache2")) for p in found_firefox
                          if (p, os.path.join(p, "cache2")) not in ff_roots]
-            if capped:
-                r.could_not_run("browser", "browser profile search inside {} stopped at its "
-                                "entry limit; profiles deeper in it were not checked".format(selected))
+            for reason in search_gaps:
+                r.could_not_run("browser", reason)
     r.submetrics["desktop_apps_found"] = len(app_roots)
     if not chromium_roots and not ff_roots and not app_roots:
         if ctx.targets:

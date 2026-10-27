@@ -136,7 +136,7 @@ def test_binary_ios_fields_are_not_searched_empty(tmp_path, bundle, encoded):
     with contextlib.closing(sqlite3.connect(tmp_path / fid[:2] / fid)) as db:
         db.execute("UPDATE history_items SET url=?", (b"https://" + BAD.encode(),))
         db.execute("INSERT INTO history_items VALUES(2,?)", ("https://" + BAD,))
-        db.execute("INSERT INTO history_visits VALUES(2,0)")
+        db.execute("INSERT INTO history_visits(history_item,visit_time) VALUES(2,0)")
         db.commit()
     for reader in (ios.run, bundle.run_ios):
         r = reader(context(phone_path=str(tmp_path)))

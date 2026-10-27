@@ -71,6 +71,13 @@ def workflow_output_guard(args, path, document=None):
         sources.append(args.collect_android)
     if getattr(args, "phone", None):
         sources.append(args.phone)
+    # A selected browser database (History, Cookies...) makes the browser check
+    # read its whole profile folder, so every existing file in that folder is
+    # evidence too - not just the one file that was named.
+    from .modules.browser import _TARGET_DB_FILES
+    for raw in list(getattr(args, "target", ()) or ()):
+        if os.path.basename(raw).lower() in _TARGET_DB_FILES and os.path.isfile(raw):
+            sources.append(os.path.dirname(os.path.abspath(raw)))
     # Artifact fields are only compared as names, never resolved or opened.
     for md in (document or {}).get("modules", {}).values():
         for hit in md.get("hits", []):

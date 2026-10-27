@@ -166,8 +166,11 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
         if ind is None:
             return
         origin = source.provenance.get(key, {})
+        before = len(r.hits)
         hit(r, ind, key[0] + "/" + key[1] + ":record " + str(record_id), detail,
             grade, observed, origin.get("source", source.root))
+        if len(r.hits) == before:
+            return  # counted past the listing limit, not listed: nothing to annotate
         r.hits[-1].provenance = dict(origin, record_id=str(record_id),
             parser=check + "/1", raw_timestamp=str(raw_time)[:128])
         if (key[0], key[1] + "-wal") in source.provenance:

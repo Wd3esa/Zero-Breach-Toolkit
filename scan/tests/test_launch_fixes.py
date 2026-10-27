@@ -77,8 +77,9 @@ def test_profile_search_does_not_follow_links(tmp_path):
         os.symlink(str(outside), str(inside / "link"), target_is_directory=True)
     except (OSError, NotImplementedError):
         pytest.skip("symbolic links need extra rights here")
-    chromium, firefox, capped = browser._browser_targeted_roots(str(inside))
-    assert chromium == [] and firefox == [] and not capped
+    chromium, firefox, gaps = browser._browser_targeted_roots(str(inside))
+    assert chromium == [] and firefox == []
+    assert any("not followed" in g for g in gaps)
 
 
 # --- Chromium times are local ---------------------------------------------------

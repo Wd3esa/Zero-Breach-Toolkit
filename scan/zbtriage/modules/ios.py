@@ -327,9 +327,12 @@ def run(ctx) -> ModuleResult:
                              + " FROM visits v LEFT JOIN urls u ON u.id=v.url" + source_join)
                 elif check == "ios:safari":
                     # history_visits.origin: 0 = visited on this phone, 1 = synced
-                    # from another device on the same iCloud account. Real Safari
-                    # databases carry it; without it a visit keeps its old grade.
-                    origin = "v.origin" if "origin" in cols else "0"
+                    # from another device on the same iCloud account. Without it
+                    # the visit cannot be placed on this phone, so it stays a
+                    # reference and the missing metadata is a gap.
+                    origin = "v.origin" if "origin" in cols else "NULL"
+                    if "origin" not in cols:
+                        gap(check, "visit-origin metadata unavailable; URLs remain references without proof of local contact")
                     query = ("SELECT i.url,v.visit_time," + origin +
                              " FROM history_visits v LEFT JOIN history_items i ON i.id=v.history_item")
                 elif check == "ios:firefox-history":

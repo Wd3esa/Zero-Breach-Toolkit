@@ -47,7 +47,7 @@ def test_nonmessage_bad_row_preserves_both_neighbours(tmp_path, bundle, kind, ba
             else:
                 db.execute("INSERT INTO history_items VALUES(2,?)", ("x" * (3 * 1024 * 1024),))
             db.execute("INSERT INTO history_items VALUES(3,?)", ("https://" + BAD + "/after",))
-            db.executemany("INSERT INTO history_visits VALUES(?,700000000)", [(1,), (2,), (3,)])
+            db.executemany("INSERT INTO history_visits(history_item,visit_time) VALUES(?,700000000)", [(1,), (2,), (3,)])
         else:
             db.execute("DELETE FROM ZPROCESS")
             db.execute("INSERT INTO ZPROCESS VALUES('fixtureproc')")
@@ -74,9 +74,9 @@ def test_safari_date_decode_and_missing_join_are_counted(tmp_path, bundle):
     path = artifact_path(tmp_path, "HomeDomain", "Library/Safari/History.db")
     with contextlib.closing(sqlite3.connect(path)) as db:
         db.execute("UPDATE history_visits SET visit_time=CAST(x'80' AS TEXT)")
-        db.execute("INSERT INTO history_visits VALUES(999,700000000)")
+        db.execute("INSERT INTO history_visits(history_item,visit_time) VALUES(999,700000000)")
         db.execute("INSERT INTO history_items VALUES(2,?)", ("https://" + BAD,))
-        db.execute("INSERT INTO history_visits VALUES(2,700000001)")
+        db.execute("INSERT INTO history_visits(history_item,visit_time) VALUES(2,700000001)")
         db.commit()
     for reader in (ios.run, bundle.run_ios):
         r = reader(context(phone_path=str(tmp_path)))

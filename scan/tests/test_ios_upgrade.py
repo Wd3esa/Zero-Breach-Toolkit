@@ -217,8 +217,8 @@ def test_additional_sql_schemas(tmp_path, reader, kind, path, schema, values, gr
 
 
 def test_safari_profiles_and_hostile_view(tmp_path, reader):
-    raw, _ = db_bytes(tmp_path, "CREATE TABLE history_items(id,url); CREATE TABLE history_visits(history_item,visit_time)",
-                     [("INSERT INTO history_items VALUES(1,?)", ("https://" + DOMAIN,)), ("INSERT INTO history_visits VALUES(1,700000000)", ())])
+    raw, _ = db_bytes(tmp_path, "CREATE TABLE history_items(id,url); CREATE TABLE history_visits(history_item,visit_time,origin DEFAULT 0)",
+                     [("INSERT INTO history_items VALUES(1,?)", ("https://" + DOMAIN,)), ("INSERT INTO history_visits(history_item,visit_time) VALUES(1,700000000)", ())])
     hostile, _ = db_bytes(tmp_path, "CREATE VIEW tabs AS WITH RECURSIVE x(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM x) SELECT n AS url FROM x")
     root = tmp_path / "backup"
     backup(root, [("HomeDomain", "Library/Safari/Profiles/fixture/History.db", raw),
