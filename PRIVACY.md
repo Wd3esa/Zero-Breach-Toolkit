@@ -53,7 +53,7 @@ privacy terms; they run only if you choose to run them.
 Phone-backup passwords are entered through a private terminal prompt, not command-line
 arguments, environment variables or report fields. They are used only to read the selected
 local backup. Python cannot guarantee secure erasure of password or plaintext memory.
-The experimental iPhone reader creates temporary plaintext database copies on local disk
+The iPhone reader creates temporary plaintext database copies on local disk
 and removes them after use; interruption or cleanup failures can leave copies. No optional
 snapshot retention was added. Acquisition and archive extraction are separate from scanning, described by `--phone-guide`
 and available through the explicit `--collect-android` command.

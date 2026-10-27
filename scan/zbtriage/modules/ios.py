@@ -1,4 +1,4 @@
-"""Experimental local Finder/iTunes backup reader, independently implemented.
+"""Local Finder/iTunes backup reader, independently implemented.
 
 Supported schemas are deliberately narrow. All source paths are opaque hex file
 IDs from Manifest.db, never paths requested by a backed-up app. Temporary copies
@@ -259,7 +259,7 @@ def run(ctx) -> ModuleResult:
     r = ModuleResult(NAME)
     ctx.partial = r
     folder = os.path.abspath(ctx.phone_path)
-    r.note("Experimental iPhone evidence readers.")
+    r.note("Local iPhone evidence readers.")
     source = None
     gaps = {}
     def gap(check, reason):

@@ -384,7 +384,7 @@ def _bundle_main(argv=None):
     p.add_argument("--no-feeds", action="store_true",
                    help="scan with the embedded indicator set only")
     p.add_argument("--phone", metavar="FOLDER",
-                   help="check an AndroidQF collection folder or experimental local iPhone backup instead of this computer")
+                   help="check an AndroidQF collection folder or local iPhone backup instead of this computer")
     p.add_argument("--describe", action="store_true",
                    help="print, as JSON, what this tool checks and the rules for "
                         "relaying a result, then exit without scanning")

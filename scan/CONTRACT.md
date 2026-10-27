@@ -141,7 +141,7 @@ unavailable historical files are kept.
   roots); `targeted` (selected files, folders, drives or browser profiles only); `browser`
   (only this account's browser profiles and built-in Chromium app profiles, with the
   `browser-only` relay line).
-- `--phone` selects AndroidQF or experimental iPhone evidence; `--ios-input` explicitly
+- `--phone` selects AndroidQF or iPhone evidence; `--ios-input` explicitly
   selects backup, extracted file system or sysdiagnose input.
 - `--preview` and `--phone-guide` exit without scanning.
 - Cancellation keeps the active module's findings and records an explicit gap.

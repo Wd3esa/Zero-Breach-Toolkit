@@ -80,7 +80,7 @@ On Linux, follow the Mac steps without step 3 (most systems already have Python 
 The phone is checked from a computer. Follow the computer steps above, then:
 
 - **iPhone:** make a local backup on the computer first. See
-  [Checking local iPhone evidence](#checking-local-iphone-evidence-experimental).
+  [Checking local iPhone evidence](#checking-local-iphone-evidence).
 - **Android:** collect the phone's records with AndroidQF first. See
   [Checking an Android phone](#checking-an-android-phone).
 
@@ -186,11 +186,11 @@ it never talks to the phone itself. It checks:
 It recognises the collection's own traces (USB debugging, the debugging shell's
 permissions) and does not report them as suspicious.
 
-### iPhone (experimental)
+### iPhone
 
 Local Finder, Apple Devices or iTunes backups (encrypted or not), extracted file systems
 and sysdiagnose archives. See
-[Checking local iPhone evidence](#checking-local-iphone-evidence-experimental).
+[Checking local iPhone evidence](#checking-local-iphone-evidence).
 
 ### Indicators
 
@@ -338,7 +338,7 @@ cannot authenticate it or verify the recipient. It is saved for separate decrypt
 command succeeds without producing a scan or an all-clear. After a failure, check the
 reported folder: original or partial records are kept and may be unencrypted.
 
-### Checking local iPhone evidence (experimental)
+### Checking local iPhone evidence
 
 1. Make a local backup with Finder (Mac) or Apple Devices / iTunes (Windows). Tick
    *Encrypt local backup*: encrypted backups include more of the records this tool checks.

@@ -214,7 +214,7 @@ READER_SPECS = (
     }),
     ReaderSpec('ios', 'ios', 'ios', ('all',), ('ios',), {
         "platforms": ["any (local Finder/iTunes backup)"],
-        "reads": "Experimental local backups (including password-based decryption), extracted filesystems and sysdiagnose directories/TAR archives. Supported messages, browser, process, configuration and diagnostic artifacts; validated SQLite WAL replay on temporary copies.",
+        "reads": "Local backups (including password-based decryption), extracted filesystems and sysdiagnose directories/TAR archives. Supported messages, browser, process, configuration and diagnostic artifacts; validated SQLite WAL replay on temporary copies.",
         "check_kinds": {"ios:manifest": "backup manifest", "ios:messages": "SMS text and dates", "ios:safari": "Safari visits", "ios:processes": "data-usage process names", "ios:applications": "installed application identifiers",
                         "ios:chrome-history": "optional Chrome backup History visits; known local visits establish contact, synced/imported/unknown origin stays reference",
                         "ios:firefox-history": "optional historical Firefox browser.db history/visits; only is_local=1 establishes local contact",

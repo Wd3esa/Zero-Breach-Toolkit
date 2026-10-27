@@ -53,7 +53,7 @@ follow: heuristics are only ever "worth a look", and the check recognises its ow
 **Process names are platform-specific.** The process-name lists used here come from iPhone
 investigations, where spyware imitated Apple's service names, and some of those names are
 ordinary Android services (`gatekeeperd` is Android's lock-screen service). The Android
-check therefore does not compare process names; the experimental iPhone reader does.
+check therefore does not compare process names; the iPhone reader does.
 
 **Stalkerware lists name companies.** Domain lists of commercial phone-monitoring apps
 include the companies' ordinary websites (Microsoft Family Safety's among them). On a

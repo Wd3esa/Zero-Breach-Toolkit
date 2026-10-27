@@ -119,7 +119,7 @@ def _parse(argv: List[str]) -> argparse.Namespace:
                    help="scan with the built-in indicator set only, ignoring "
                         "downloaded sets")
     p.add_argument("--phone", metavar="FOLDER",
-                   help="check an AndroidQF collection folder or experimental local iPhone backup instead of this computer")
+                   help="check an AndroidQF collection folder or local iPhone backup instead of this computer")
     p.add_argument("--describe", action="store_true",
                    help="print, as JSON, every check this tool runs, what each reads and "
                         "cannot see, the exit codes and the rules for relaying a "

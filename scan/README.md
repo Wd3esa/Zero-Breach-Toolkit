@@ -59,7 +59,7 @@ python zero-breach-toolkit.py [--quick] [--phone FOLDER] [--json PATH] [--share-
 | `--extended-windows` | also read existing Sysmon and Security logs, without enabling them or elevating |
 | `--iocs PATH` | use an explicit indicator file instead of the curated sets and downloaded cache; repeatable |
 | `--update` | refresh published sources in the local cache (separate network step) |
-| `--phone FOLDER` | read an AndroidQF folder or an experimental local iPhone backup |
+| `--phone FOLDER` | read an AndroidQF folder or a local iPhone backup |
 | `--phone-guide android\|ios` | print preparation steps |
 | `--backup-password` | prompt privately for an encrypted phone backup's password |
 | `--patterns` | opt-in, bounded check against two published Candiru file rules; needs Python 3.9+ and the pinned optional YARA-X wheel |

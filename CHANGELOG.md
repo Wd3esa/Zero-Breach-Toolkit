@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- iPhone support is no longer labelled experimental: it has been checked against real
+  iOS 15 to 18 backups, file-system extractions and sysdiagnose archives.
 - `--update --accept-shrink SOURCE_ID` accepts a source whose list genuinely shrank by more
   than half; without it such an update is still refused.
 - The AndroidQF download uses the same generic user agent as indicator updates.
