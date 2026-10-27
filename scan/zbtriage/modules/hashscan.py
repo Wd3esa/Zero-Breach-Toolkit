@@ -44,6 +44,28 @@ PRUNE_DIRS = (
 )
 
 
+def _hs_xdg_user_dirs(user, config):
+    """Download, desktop and documents folders from XDG user-dirs.dirs."""
+    found = []
+    try:
+        with io.open(os.path.join(config, "user-dirs.dirs"), encoding="utf-8", errors="replace") as fh:
+            lines = fh.read(64 * 1024).splitlines()
+    except OSError:
+        return found
+    for line in lines:
+        key, sep, value = line.strip().partition("=")
+        if not sep or key not in ("XDG_DOWNLOAD_DIR", "XDG_DESKTOP_DIR", "XDG_DOCUMENTS_DIR"):
+            continue
+        value = value.strip().strip('"')
+        if value.startswith("$HOME/"):
+            value = os.path.join(user, value[len("$HOME/"):])
+        elif not value.startswith("/"):
+            continue
+        if os.path.normpath(value) != os.path.normpath(user):  # "$HOME" itself means "not set"
+            found.append(value)
+    return found
+
+
 def _roots():
     """The user-writable locations an implant actually drops into, filtered to
     those that exist on this host. Matches the proof-of-concept exactly."""
@@ -64,6 +86,9 @@ def _roots():
         data = os.environ.get("XDG_DATA_HOME", "")
         roots = [os.path.join(user, name) for name in
                  ("Downloads", "Desktop", "Documents", ".local/bin")]
+        # A desktop in another language names these folders in that language
+        # (~/Téléchargements, ~/التنزيلات...); user-dirs.dirs says where they are.
+        roots += _hs_xdg_user_dirs(user, config if os.path.isabs(config) else os.path.join(user, ".config"))
         roots += [config if os.path.isabs(config) else os.path.join(user, ".config"),
                   data if os.path.isabs(data) else os.path.join(user, ".local/share"),
                   "/tmp", "/var/tmp"]

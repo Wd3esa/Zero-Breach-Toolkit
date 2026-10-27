@@ -69,6 +69,21 @@ def _browser_packages(prefix):
         return []
 
 
+def _snap_revision(snap, app):
+    """The folder a snap's "current" link names (~/snap/<app>/<revision>), found by
+    reading the link rather than following it; "" when there is none. The target
+    must be a plain revision name in the same folder."""
+    current = os.path.join(snap, app, "current")
+    try:
+        target = os.readlink(current)
+    except (OSError, ValueError, NotImplementedError):
+        return ""
+    if not target or os.sep in target or (os.altsep and os.altsep in target) or target in (".", ".."):
+        return ""
+    folder = os.path.join(snap, app, target)
+    return folder if os.path.isdir(folder) and not os.path.islink(folder) else ""
+
+
 def _chromium_roots():
     """Chromium user-data roots as (label, path), chosen by platform.
 
@@ -128,7 +143,16 @@ def _chromium_roots():
         cfg = cfg if os.path.isabs(cfg) else os.path.join(home, ".config")
         var = os.path.join(home, ".var", "app")
         snap = os.path.join(home, "snap")
-        return [
+        # Snap apps other than Chromium keep their data in a numbered revision
+        # folder (~/snap/brave/<rev>/.config/...); "current" is only a link to it.
+        snapped = [(label, os.path.join(_snap_revision(snap, app), *rest))
+                   for label, app, rest in (
+                       ("brave-snap", "brave", (".config", "BraveSoftware", "Brave-Browser")),
+                       ("opera-snap", "opera", (".config", "opera")),
+                       ("vivaldi-snap", "vivaldi", (".config", "vivaldi")),
+                       ("chromium-snap-revision", "chromium", (".config", "chromium")))
+                   if _snap_revision(snap, app)]
+        return snapped + [
             ("chrome", os.path.join(cfg, "google-chrome")),
             ("chromium", os.path.join(cfg, "chromium")),
             ("brave", os.path.join(cfg, "BraveSoftware", "Brave-Browser")),
@@ -504,8 +528,13 @@ def _firefox_roots():
     if sys.platform.startswith("linux"):
         cache = os.environ.get("XDG_CACHE_HOME", "")
         cache = cache if os.path.isabs(cache) else os.path.join(home, ".cache")
+        config = os.environ.get("XDG_CONFIG_HOME", "")
+        config = config if os.path.isabs(config) else os.path.join(home, ".config")
         return [
             (os.path.join(home, ".mozilla", "firefox"),
+             os.path.join(cache, "mozilla", "firefox")),
+            # Firefox 147 and later create new profiles in the XDG folders.
+            (os.path.join(config, "mozilla", "firefox"),
              os.path.join(cache, "mozilla", "firefox")),
             # snap packaging
             (os.path.join(home, "snap", "firefox", "common", ".mozilla",
@@ -529,7 +558,11 @@ def _firefox_roots():
                           "TorBrowser", "Data", "Browser", "Caches")),
             (os.path.join(home, ".var", "app", "org.mozilla.firefox", ".mozilla",
                           "firefox"),
-             os.path.join(home, ".var", "app", "org.mozilla.firefox", ".cache",
+             os.path.join(home, ".var", "app", "org.mozilla.firefox", "cache",
+                          "mozilla", "firefox")),
+            (os.path.join(home, ".var", "app", "org.mozilla.firefox", "config", "mozilla",
+                          "firefox"),
+             os.path.join(home, ".var", "app", "org.mozilla.firefox", "cache",
                           "mozilla", "firefox")),
         ]
     return []

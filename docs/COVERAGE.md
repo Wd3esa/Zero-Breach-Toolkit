@@ -7,7 +7,8 @@ Run `--describe` for the full check catalogue. Each report lists the checks that
 ran and the gaps found on that input.
 
 Browsers are looked for at their default locations (on Linux, also common Snap and
-Flatpak packages):
+Flatpak packages, snap data in its current revision folder, and Firefox 147's
+`~/.config/mozilla/firefox`):
 
 - **Chromium-based:** Chrome, Edge and Brave (stable, beta, dev, canary and nightly
   channels), Chromium, Vivaldi, Opera, Opera GX, Arc and Yandex.

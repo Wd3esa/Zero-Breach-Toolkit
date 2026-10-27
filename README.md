@@ -136,7 +136,9 @@ they cannot tell whether a phone is infected.
 ### macOS and Linux
 
 The same browsers are checked at their default locations, plus common Snap and Flatpak
-packages on Linux. File fingerprints, separate browser cache locations and bounded saved-record
+packages and Firefox's newer `~/.config/mozilla` profile folder on Linux. On a Linux desktop
+in another language, the translated Downloads, Desktop and Documents folders are found from
+`user-dirs.dirs`. File fingerprints, separate browser cache locations and bounded saved-record
 checks run without administrator access.
 
 - **Safari (macOS):** history and profile databases, open and iCloud tabs, the URL cache,
