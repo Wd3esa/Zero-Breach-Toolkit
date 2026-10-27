@@ -130,7 +130,8 @@ def scope_guide(platform):
       trusted certificate?                     -> No
       Intrusion Logs?                          -> No (unless you turned on Intrusion
                                                   Logging in Advanced Protection)
-      Hash files on the device?                -> No
+      Hash files on the device?                -> No (Yes also checks file
+                                                  fingerprints, but it is slow)
       Browser history / Magisk modules?        -> No
     The phone will ask you to confirm the backup: tap "Back up my data"
     (leave the password empty).

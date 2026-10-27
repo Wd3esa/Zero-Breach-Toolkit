@@ -145,7 +145,10 @@ packages. On macOS and Linux type `python3` instead of `python`.
    ```
    python -X utf8 scan/zero-breach-toolkit.py --update
    ```
-4. **Close your browsers and chat apps**, then run the check. A menu opens; press Enter for
+4. **On a Mac, give Terminal Full Disk Access first** (System Settings → Privacy & Security
+   → Full Disk Access → add Terminal, then reopen it). Without it macOS blocks Safari's
+   records and some folders, and the report lists them as not checked.
+5. **Close your browsers and chat apps**, then run the check. A menu opens; press Enter for
    the standard check of this computer.
    ```
    python -X utf8 scan/zero-breach-toolkit.py
@@ -209,7 +212,7 @@ not apply. Running from source avoids all of that.
    | Download copies of all apps or only non-system ones? | Only non-system packages |
    | Remove copies of apps signed with a trusted certificate? | No |
    | Take the Intrusion Logs? | No, unless you turned on Intrusion Logging |
-   | Hash files on the device? | No |
+   | Hash files on the device? | No (Yes also checks file fingerprints, but it is slow and can stop the collection on some phones) |
    | Browser history / Magisk modules? | No |
 
    On the phone, confirm the backup with *Back up my data*.

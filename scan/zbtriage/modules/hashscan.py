@@ -121,19 +121,46 @@ _WORKERS = max(2, min(8, (os.cpu_count() or 2)))
 
 
 def _hash_one(full):
-    """(path, hex digest or None, size). None = could not be fingerprinted
-    (refused path, over the size cap, locked or unreadable) - counted as a gap
-    by the caller, never as clean."""
+    """(path, hex digest or None, size, reason). With no digest, reason says why:
+    "link" and "special" are aliases and device/socket entries, not files that
+    can hold a program, and are not gaps (a link's target is fingerprinted
+    where it lies inside a scanned folder); "large", "denied" and "unreadable"
+    are files that were not compared, and the caller reports them as gaps."""
     try:
+        if os.path.islink(full):
+            return full, None, 0, "link"
         problem = path_problem(full)
         if problem:
-            return full, None, 0
-        if os.path.getsize(full) > MAX_BYTES:
-            return full, None, 0
+            return full, None, 0, "unreadable"
+        info = os.stat(full, follow_symlinks=False)
+        if not stat.S_ISREG(info.st_mode):
+            return full, None, 0, "special"
+        if info.st_size > MAX_BYTES:
+            return full, None, 0, "large"
         digest, size = _sha256(full)
-        return full, digest, size
-    except OSError:
-        return full, None, 0
+        return full, digest, size, ""
+    except PermissionError:
+        return full, None, 0, "denied"
+    except OSError as exc:
+        if "hash read limit" in str(exc):
+            return full, None, 0, "large"
+        return full, None, 0, "unreadable"
+
+
+def _hs_reasons(reasons):
+    """Why files were not compared, in words, with the fix where there is one."""
+    parts = []
+    if reasons["denied"]:
+        parts.append("{} permission denied".format(reasons["denied"]))
+    if reasons["large"]:
+        parts.append("{} over {} MB".format(reasons["large"], MAX_BYTES // (1024 * 1024)))
+    if reasons["unreadable"]:
+        parts.append("{} could not be read".format(reasons["unreadable"]))
+    text = ", ".join(parts) or "could not be read"
+    if reasons["denied"] and sys.platform == "darwin":
+        text += ("; macOS privacy protection blocks some folders: give Terminal Full Disk Access "
+                 "(System Settings > Privacy & Security > Full Disk Access) and run again")
+    return text
 
 
 def _sha256(full):
@@ -209,11 +236,13 @@ def run(ctx) -> ModuleResult:
         # cleared of anything (D3).
         ctx.emit("[hash] scanning {} ...".format(root))
         tally = {"hashed": 0, "candidates": 0, "unreadable": 0}
+        reasons = {"large": 0, "denied": 0, "unreadable": 0}
 
-        def _walk_err(exc, _r=r, _t=tally):
+        def _walk_err(exc, _r=r, _t=tally, _w=reasons):
             # An unreadable subtree would otherwise vanish silently from os.walk.
             _r.skipped += 1
             _t["unreadable"] += 1
+            _w["denied" if isinstance(exc, PermissionError) else "unreadable"] += 1
 
         candidates = [root] if selected_file else []
         for dirpath, dirs, files in ([] if selected_file else walk_local(root, onerror=_walk_err)):
@@ -229,12 +258,18 @@ def run(ctx) -> ModuleResult:
         # Python's interpreter lock, so several files are done at once. Results
         # are consumed in the original walk order, so the report is identical to
         # the one-at-a-time version (2026-10-25: 7 min for 45k files before).
-        for full, digest, size in _hash_outcomes(candidates, ctx):
+        for full, digest, size, reason in _hash_outcomes(candidates, ctx):
+            if reason in ("link", "special"):
+                tally["candidates"] -= 1
+                key = "links_not_followed" if reason == "link" else "special_entries"
+                r.submetrics[key] = r.submetrics.get(key, 0) + 1
+                continue
             if digest is None:
                 # Locked, permission-denied, refused or over the size cap:
                 # skipped, never clean (D3).
                 r.skipped += 1
                 tally["unreadable"] += 1
+                reasons[reason] += 1
                 continue
 
             tally["hashed"] += 1
@@ -269,19 +304,22 @@ def run(ctx) -> ModuleResult:
             if tally["unreadable"]:
                 r.could_not_run(
                     name + " (partial)",
-                    "{} of {} candidate file(s) under this root could not be "
-                    "read or were too large to fingerprint, so they were not "
-                    "compared against the known hashes".format(
-                        tally["unreadable"], tally["candidates"]))
+                    "{} of {} candidate file(s) under this root were not compared "
+                    "against the known hashes ({})".format(
+                        tally["unreadable"], tally["candidates"], _hs_reasons(reasons)))
         elif tally["candidates"] or tally["unreadable"]:
             # Candidates existed but not one could be fingerprinted: this root
             # was not searched at all, however many files it holds.
             r.could_not_run(
                 name,
-                "no file under this root could be fingerprinted ({} candidate "
-                "file(s) unreadable)".format(tally["unreadable"]))
+                "no file under this root could be fingerprinted ({} candidate file(s): {})".format(
+                    tally["unreadable"], _hs_reasons(reasons)))
         else:
             # Walked cleanly, held nothing to fingerprint. Genuinely covered.
             r.ran(name)
 
+    if r.submetrics.get("links_not_followed"):
+        r.note("{:,} link(s) (aliases such as app framework shortcuts) were not followed; the files "
+               "they point to are fingerprinted where they lie inside a scanned folder.".format(
+                   r.submetrics["links_not_followed"]))
     return r

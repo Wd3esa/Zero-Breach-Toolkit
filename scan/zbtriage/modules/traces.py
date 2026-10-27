@@ -41,6 +41,7 @@ module's code in one namespace.
 from __future__ import annotations
 
 import datetime
+import errno
 import hashlib
 import json
 import os
@@ -68,7 +69,7 @@ _TR_PS_CWD = os.environ.get("SystemRoot") or r"C:\Windows"
 _TR_PS = [_TR_PS_EXE, "-NoProfile", "-NonInteractive", "-ExecutionPolicy",
           "Bypass", "-Command"]
 _TR_MAX_FILES = 300000          # Mark-of-the-Web: files examined before stopping
-_TR_MAX_DEPTH = 8
+_TR_MAX_DEPTH = 16
 _TR_SKIP_DIRS = {"node_modules", ".git", "__pycache__", ".venv", "venv"}
 _TR_MAX_LEADS = 25              # per kind; the rest are counted in a note
 _TR_PS_EVENTS = 20000           # newest PowerShell script blocks examined
@@ -202,8 +203,12 @@ def _tr_read_zone(path):
     try:
         with open(path + ":Zone.Identifier", "rb") as fh:
             raw = fh.read(_TR_ZONE_LIMIT + 1)
-    except OSError:
-        return None
+    except FileNotFoundError:
+        return None  # no download-origin record
+    except OSError as exc:
+        if exc.errno == errno.EINVAL:
+            return None  # a drive (FAT, exFAT...) that cannot hold one
+        return {"_unreadable": "1"}
     if len(raw) > _TR_ZONE_LIMIT:
         return {"_oversize": "1"}
     text = (raw.decode("utf-16", "replace") if raw[:2] in (b"\xff\xfe", b"\xfe\xff")
@@ -222,15 +227,20 @@ def _tr_check_motw(r, ctx):
         r.could_not_run("mark-of-the-web", "no Downloads, Desktop or Documents folder found")
         return
     examined, stamped, stopped, oversize = 0, 0, False, 0
+    unreadable = {"files": 0, "folders": 0, "deep": 0}
 
     def onerror(_exc):
         r.skipped += 1
+        unreadable["folders"] += 1
 
     for root in roots:
         base_depth = root.rstrip("\\/").count(os.sep)
         for dirpath, dirs, files in walk_local(root, onerror=onerror):
-            dirs[:] = [d for d in dirs if d.lower() not in _TR_SKIP_DIRS and
-                       dirpath.count(os.sep) - base_depth < _TR_MAX_DEPTH]
+            kept = [d for d in dirs if d.lower() not in _TR_SKIP_DIRS]
+            if dirpath.count(os.sep) - base_depth >= _TR_MAX_DEPTH:
+                unreadable["deep"] += len(kept)
+                kept = []
+            dirs[:] = kept
             for name in files:
                 if examined >= _TR_MAX_FILES:
                     stopped = True
@@ -243,6 +253,10 @@ def _tr_check_motw(r, ctx):
                 if zone.get("_oversize"):
                     r.skipped += 1
                     oversize += 1
+                    continue
+                if zone.get("_unreadable"):
+                    r.skipped += 1
+                    unreadable["files"] += 1
                     continue
                 stamped += 1
                 observed = ""
@@ -275,6 +289,13 @@ def _tr_check_motw(r, ctx):
     if oversize:
         r.could_not_run("mark-of-the-web", "{} download record(s) were too large to read in full, "
                         "so where those files came from was not checked".format(oversize))
+    if unreadable["files"] or unreadable["folders"]:
+        r.could_not_run("mark-of-the-web: unreadable", "{} file(s) and {} folder(s) could not be read, so "
+                        "where those files came from was not checked".format(
+                            unreadable["files"], unreadable["folders"]))
+    if unreadable["deep"]:
+        r.could_not_run("mark-of-the-web: deep folders", "{} folder(s) more than {} levels down were not "
+                        "examined".format(unreadable["deep"], _TR_MAX_DEPTH))
     r.checked += examined
     r.submetrics["motw_files_examined"] = examined
     r.submetrics["motw_files_with_origin"] = stamped

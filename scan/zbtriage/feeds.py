@@ -337,7 +337,7 @@ def _write_manifest(cache: str, entries: Dict[str, Dict[str, object]]) -> None:
     final = _feed_local_path(cache, MANIFEST)
     fd, tmp = tempfile.mkstemp(dir=cache, prefix=".manifest.")
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        json.dump({"tool": "zero-breach-triage", "version": __version__,
+        json.dump({"tool": "zero-breach-toolkit", "version": __version__,
                    "sources": entries}, fh, indent=2, ensure_ascii=False)
     os.replace(tmp, final)
 
@@ -376,7 +376,7 @@ def update(cache: Optional[str] = None, sources: Optional[List[Dict[str, str]]] 
                 old["checked_utc"] = checked
                 entry.update(status="unchanged", indicators=old.get("indicators"))
                 results.append(entry)
-                emit("[=] {} unchanged".format(src["name"]))
+                emit("[=] {}: {} indicators, unchanged (sha256 {})".format(src["name"], old.get("indicators"), digest[:16]))
                 continue
             fd, tmp = tempfile.mkstemp(dir=cache, prefix=".dl.", suffix=_EXT[src["format"]])
             with os.fdopen(fd, "wb") as fh:
@@ -407,7 +407,7 @@ def update(cache: Optional[str] = None, sources: Optional[List[Dict[str, str]]] 
             # --update re-downloads it.
             _write_manifest(cache, manifest)
             entry.update(status="updated", indicators=len(parsed))
-            emit("[+] {}: {} indicators".format(src["name"], len(parsed)))
+            emit("[+] {}: {} indicators (sha256 {})".format(src["name"], len(parsed), digest[:16]))
         except Exception as exc:          # one bad source must not stop the rest
             entry.update(status="failed", error=str(exc)[:300],
                          kept_previous=src["id"] in manifest)
@@ -500,8 +500,10 @@ def update_command(cache: Optional[str], json_path: Optional[str]) -> int:
                         "changed; choose a writable folder with --indicator-cache.".format(
                             exc.strerror or type(exc).__name__), sys.stderr)
         return 1
-    _report_console("Indicator sets in {}: {} up to date, {} failed.".format(
-        summary["cache"], summary["ok"], summary["failed"]), sys.stdout)
+    total = sum(r.get("indicators") or 0 for r in summary["sources"] if r["status"] != "failed")
+    _report_console("Indicator sets in {}: {} up to date, {} failed; {:,} indicators. Full SHA-256 "
+                    "and download times are in manifest.json there.".format(
+                        summary["cache"], summary["ok"], summary["failed"], total), sys.stdout)
     for r in summary["sources"]:
         if r["status"] == "failed":
             _report_console("  FAILED {}: {}{}".format(r["name"], r.get("error", ""),

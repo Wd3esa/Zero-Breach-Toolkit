@@ -31,3 +31,6 @@ __pycache__/
 
 # Signed release files (uploaded to a GitHub release, not committed)
 /release/
+
+# Local review notes
+ideas.md

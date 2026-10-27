@@ -117,6 +117,8 @@ READER_SPECS = (
             "extended-process-events": "opt-in existing Sysmon and Security process events; never enables logs or elevates",
             "mark-of-the-web": "download origins of files (Zone.Identifier)",
             "mark-of-the-web: remaining files": "files beyond the examination cap",
+            "mark-of-the-web: unreadable": "files and folders whose download origin could not be read",
+            "mark-of-the-web: deep folders": "folders below the depth limit",
             "run-history": "commands typed into Win+R (where fake 'verify you are "
                            "human' pages tell people to paste)",
             "antivirus-status": "current registered antivirus product and update status reported by Windows Security Center; not an independent protection test",
@@ -197,6 +199,7 @@ READER_SPECS = (
             "android:settings": "accessibility access, app verification, debugging, "
                                 "device admins",
             "android:files": "collected file paths and fingerprints",
+            "android:file-hashes": "file fingerprints recorded in the collection",
             "android:root": "collected root-tool records",
             "android:device-logs": "spyware domains, IPs, app ids and paths in the system "
                                    "services' state (dumpsys) and logcat",

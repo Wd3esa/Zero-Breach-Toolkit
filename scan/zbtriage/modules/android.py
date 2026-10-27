@@ -778,7 +778,7 @@ def _an_device_security(r, folder, props):
 
 def _an_files(r, ctx, folder):
     path = os.path.join(folder, "files.json")
-    count = invalid = valid = 0
+    count = invalid = valid = hashed = 0
     try:
         for f in _an_file_records(path):
             count += 1
@@ -790,6 +790,10 @@ def _an_files(r, ctx, folder):
             if ind and ioc_exact_identity(ind, p):
                 _an_hit(r, ind, p, "a file at a path the researchers tie to spyware")
             sha = str(f.get("sha256") or "").lower()
+            if len(sha) == 64 and all(c in "0123456789abcdef" for c in sha):
+                hashed += 1
+            else:
+                sha = ""
             ind = ctx.iocs.lookup_typed(TYPE_SHA256, sha) if sha else None
             if ind:
                 _an_hit(r, ind, p, "this file has the fingerprint of a published sample")
@@ -808,7 +812,18 @@ def _an_files(r, ctx, folder):
         r.could_not_run("android:files", "AndroidQF could not list files on this phone")
     else:
         r.ran("android:files")
+        # Paths and names were checked; fingerprints only where AndroidQF
+        # recorded them (its "hash files" option), so say how many.
+        if hashed == valid:
+            r.ran("android:file-hashes")
+        elif not hashed:
+            r.could_not_run("android:file-hashes", "the collection has no file fingerprints (AndroidQF's "
+                            "\"hash files\" option was off), so files were checked by path and name only")
+        else:
+            r.could_not_run("android:file-hashes", "{} of {} listed file(s) have no valid fingerprint, so "
+                            "they were checked by path and name only".format(valid - hashed, valid))
     r.submetrics["android_files_listed"] = valid
+    r.submetrics["android_files_hashed"] = hashed
 
 
 

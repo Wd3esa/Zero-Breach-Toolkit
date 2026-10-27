@@ -104,7 +104,9 @@ class ExpandedTests(unittest.TestCase):
         android._an_files(r, context(), str(self.root))
         self.assertEqual(r.submetrics["android_files_listed"], 2)
         self.assertEqual([h.indicator for h in r.hits], [DIGEST])
-        self.assertTrue(all(c.ran for c in r.checks))
+        self.assertTrue(any(c.name == "android:files" and c.ran for c in r.checks))
+        # The first record has no fingerprint: path-only coverage is a gap.
+        self.assertTrue(any(c.name == "android:file-hashes" and not c.ran for c in r.checks))
 
     def test_truncated_file_list_retains_earlier_match(self):
         (self.root / "files.json").write_text(json.dumps([{"path": "/x", "sha256": DIGEST}])[:-1] + ',{"path":')

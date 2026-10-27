@@ -924,7 +924,7 @@ def _locked_note(path, exc):
     lowered = path.lower()
     for marker, label in (("bravesoftware", "Brave"), ("vivaldi", "Vivaldi"),
                           ("google", "Chrome"), ("microsoft", "Edge"),
-                          ("mozilla", "Firefox")):
+                          ("mozilla", "Firefox"), ("safari", "Safari")):
         if marker in lowered:
             browser_name = label
             break
@@ -935,6 +935,15 @@ def _locked_note(path, exc):
     if "interrupted" in str(exc).lower():
         return ("{} took longer than {} seconds to read, so the rest of it was not "
                 "checked.".format(path, _DB_SECONDS) + cleanup_warning)
+    if sys.platform == "darwin" and isinstance(exc, PermissionError) and "locked" not in str(exc).lower():
+        # macOS does not lock a running browser's files; a refusal here is its
+        # privacy protection (Safari's folders, Desktop, Documents...), and
+        # closing the browser would not help.
+        return ("macOS privacy protection blocked {} ({}), so it was not checked. Give "
+                "Terminal Full Disk Access (System Settings > Privacy & Security > Full Disk "
+                "Access), then run again.".format(browser_name if browser_name != "the browser"
+                                                   else "this folder", os.path.basename(path))
+                + cleanup_warning)
     if (isinstance(exc, PermissionError) or getattr(exc, "errno", None) == 13
             or "locked" in str(exc).lower()):
         return ("{} was running, so one of its databases was locked and could "
@@ -1169,7 +1178,18 @@ def run(ctx) -> ModuleResult:
     # Insertion order is preserved so the checks list is stable.
     kinds = {}
 
+    beat = [time.monotonic()]
+
+    def heartbeat(label):
+        # Long browser phases (big caches, many profiles) print a line now and
+        # then, so a redirected or slow run visibly keeps working.
+        now = time.monotonic()
+        if now - beat[0] >= 20:
+            beat[0] = now
+            ctx.emit("[browser]   still working: {} ({:,} records checked so far)".format(label, r.checked))
+
     def _touch(label, kind):
+        heartbeat(label)
         key = (label, kind)
         if key not in kinds:
             kinds[key] = {"ok": False, "reason": "", "failures": []}
@@ -1300,7 +1320,7 @@ def run(ctx) -> ModuleResult:
             mark_fail(label, kind, "bookmark file unreadable or unsupported: " + type(exc).__name__)
             return
         pending = [(node, 0) for node in doc["roots"].values()]
-        count = 0
+        count = unsupported = 0
         while pending:
             node, depth = pending.pop()
             count += 1
@@ -1308,7 +1328,7 @@ def run(ctx) -> ModuleResult:
                 mark_fail(label, kind, "bookmark entry limit reached")
                 break
             if depth > 32 or not isinstance(node, dict):
-                mark_fail(label, kind, "unsupported bookmark entry or nesting")
+                unsupported += 1
                 continue
             if node.get("type") == "folder" and isinstance(node.get("children"), list):
                 pending.extend((child, depth + 1) for child in node["children"])
@@ -1316,8 +1336,15 @@ def run(ctx) -> ModuleResult:
                 for ind in ctx.iocs.most_specific(ctx.iocs.search(node["url"].lower())):
                     record_hit(path, ind, "Saved bookmark URL; a bookmark does not establish a visit or contact.")
                 r.checked += 1
+            elif "type" not in node and node and all(isinstance(v, dict) for v in node.values()):
+                # Opera groups its own roots (speed dial, trash, unsorted...) in
+                # a map of folders with no type of its own.
+                pending.extend((child, depth + 1) for child in node.values())
             else:
-                mark_fail(label, kind, "unsupported bookmark entry")
+                unsupported += 1
+        if unsupported:
+            mark_fail(label, kind, "{} bookmark entr{} in an unsupported layout were not read".format(
+                unsupported, "y" if unsupported == 1 else "ies"))
         mark_ok(label, kind)
 
     def scan_safari_history(label, path):
@@ -1910,6 +1937,7 @@ def run(ctx) -> ModuleResult:
         read_any = False
         for dirpath, _dirs, files in walk_local(root, onerror=onerror):
             for fn in files:
+                heartbeat(label)
                 full = os.path.join(dirpath, fn)
                 try:
                     problem = path_problem(full)

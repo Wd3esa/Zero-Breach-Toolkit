@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- macOS: a folder blocked by macOS privacy protection (Safari's records, some app
+  folders) is reported as such, with the Full Disk Access fix, instead of "close the
+  browser". The README now says to grant Terminal Full Disk Access first.
+- File fingerprint gaps say why: permission denied, over 120 MB, or unreadable. Links
+  (such as app framework aliases) are no longer counted as missed files.
+- Opera bookmarks in its own folders (speed dial, trash, unsorted) are read; other
+  unrecognised bookmark entries are counted in one gap.
+- Reports never replace an existing file in a folder the hash check reads; an earlier
+  report of this tool may still be replaced.
+- Windows: download-origin records that cannot be read, and folders below the depth limit,
+  are reported as not checked.
+- Android: files without a valid fingerprint are reported (`android:file-hashes`), so a
+  collection made without AndroidQF's "hash files" option is no longer complete by path
+  alone.
+- `--update` shows each source's SHA-256 and the total number of indicators.
+- Reports name the tool `zero-breach-toolkit`.
+- A long browser phase prints a progress line; suppressed phone-monitoring mentions are
+  named in the note.
 - iPhone: accounts looked up by iMessage and FaceTime (`idstatuscache.plist`) are checked
   against published operator email addresses.
 - iPhone: Safari's and Chromium browsers' favicon stores (pages whose icons were saved)

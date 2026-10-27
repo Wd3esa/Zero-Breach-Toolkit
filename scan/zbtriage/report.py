@@ -107,12 +107,14 @@ def _stalkerware_sites_to_leads(modules: List[ModuleResult]) -> None:
     for m in modules:
         if m.name in phone:
             continue
-        keep, mentions = [], 0
+        keep, mentions, mentioned = [], 0, []
         for h in m.hits:
             if h.tier != "stalkerware":
                 keep.append(h)
             elif h.evidence == EV_REFERENCED:
                 mentions += 1
+                if h.indicator not in mentioned:
+                    mentioned.append(h.indicator)
             else:
                 m.add_lead(Lead(
                     "stalkerware-site", h.location,
@@ -122,7 +124,9 @@ def _stalkerware_sites_to_leads(modules: List[ModuleResult]) -> None:
         m.hits = keep
         if mentions:
             m.note("{}: {} mention(s) of phone-monitoring companies' sites in saved web "
-                   "content were not listed - a mention is not a visit".format(m.name, mentions))
+                   "content were not listed as findings - a mention is not a visit ({})".format(
+                       m.name, mentions, ", ".join(_defang(d) for d in mentioned[:10])
+                       + (", ..." if len(mentioned) > 10 else "")))
 
 
 def build_document(iocs: IocSet, modules: List[ModuleResult],
@@ -187,7 +191,7 @@ def build_document(iocs: IocSet, modules: List[ModuleResult],
     gaps = [sanitize_untrusted(g) for g in gaps]
     document = {
         "schema_version": SCHEMA_VERSION,
-        "tool": {"name": "zero-breach-triage", "version": __version__},
+        "tool": {"name": "zero-breach-toolkit", "version": __version__},
         "timestamp": started.replace(microsecond=0).isoformat(),
         "platform": _platform_info(),
         "ioc_set": {
@@ -293,7 +297,7 @@ def describe_document() -> Dict[str, Any]:
     grades = dict(EVIDENCE_MEANING)
     return {
         "schema_version": SCHEMA_VERSION,
-        "tool": {"name": "zero-breach-triage", "version": __version__,
+        "tool": {"name": "zero-breach-toolkit", "version": __version__,
                  "summary": ("Local, read-only check for traces of known commercial "
                              "spyware. Never contacts an indicator; never modifies "
                              "the machine. A clean result is not a clean bill of "
@@ -463,7 +467,7 @@ def share_summary(document: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "report_type": "sharing-summary",
-        "tool": {"name": "zero-breach-triage", "version": __version__},
+        "tool": {"name": "zero-breach-toolkit", "version": __version__},
         "verdict": {k: v.get(k, 0) for k in ("status", "hits_total", "findings_total",
                                              "references_total", "withdrawn_total")},
         "exit_code": document["exit_code"],
@@ -1493,9 +1497,9 @@ _GAP_APP = re.compile(r"^browser/(?:app:)?([^:/]+):")
 # and telling someone to close an app does not fix a damaged database.
 _GAP_LOCKED = ("was running", "permission denied", "locked")
 _GAP_COUNT = re.compile(r"(\d+) of (\d+) candidate file")
-_GAP_NONE = re.compile(r"\((\d+) candidate file\(s\) unreadable\)")
+_GAP_NONE = re.compile(r"\((\d+) candidate file\(s\)")
 _APP_NAMES = {"edge": "Edge", "chrome": "Chrome", "brave": "Brave", "vivaldi": "Vivaldi",
-              "chromium": "Chromium", "firefox": "Firefox",
+              "chromium": "Chromium", "firefox": "Firefox", "safari": "Safari",
               "selected": "the selected browser folder"}
 
 
@@ -1507,9 +1511,18 @@ def _gap_lines(gaps: List[str]) -> List[str]:
     full list stays in the JSON and at the end of the report; here, one line
     per kind of gap."""
     locked, files_missed, rest = [], 0, {}
+    private, full_disk = [], False
     missing_sources = False
     for g in gaps:
         low = g.lower()
+        if "full disk access" in low:
+            full_disk = True
+        if "macos privacy protection blocked" in low:
+            app = _GAP_APP.match(g)
+            name = _APP_NAMES.get(app.group(1).strip(), app.group(1).strip().title()) if app else "some folders"
+            if name not in private:
+                private.append(name)
+            continue
         if low.startswith("indicators/indicator-sources:") and "indicator source missing" in low:
             missing_sources = True
             continue
@@ -1533,9 +1546,15 @@ def _gap_lines(gaps: List[str]) -> List[str]:
         lines.append("Open apps kept some of their data locked, so it was not read: {}. "
                      "Close them and run the check again to include it.".format(
                          ", ".join(sorted(locked))))
+    if private:
+        lines.append("macOS privacy protection kept some records from being read: {}. Give "
+                     "Terminal Full Disk Access (System Settings > Privacy & Security > Full Disk "
+                     "Access), then run the check again.".format(", ".join(sorted(private))))
     if files_missed:
         lines.append("{:,} program file(s) could not be fingerprinted (in use, protected, "
-                     "or over 120 MB).".format(files_missed))
+                     "or over 120 MB).".format(files_missed)
+                     + (" Full Disk Access for Terminal lets macOS-protected folders be included."
+                        if full_disk and not private else ""))
     for reason, count in rest.items():
         line = reason if len(reason) <= 240 else reason[:237] + "..."
         if count > 1:
