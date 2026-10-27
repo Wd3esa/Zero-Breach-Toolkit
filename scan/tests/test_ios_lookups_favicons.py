@@ -158,3 +158,11 @@ def test_empty_lookup_cache_is_fully_read(tmp_path, reader, doc):
     backup(root, [("HomeDomain", "Library/IdentityServices/idstatuscache.plist", plistlib.dumps(doc))])
     result = reader(_ctx(root))
     assert "ios:id-status-cache" not in _gaps(result)
+
+
+def test_one_bad_analytics_record_does_not_hide_the_rest(tmp_path, reader):
+    good = plistlib.dumps({"Caller": "com.spy.agent"}, fmt=plistlib.FMT_BINARY)
+    root = _analytics_fs(tmp_path, [(1764969616.5, b"bplist00 broken"), (1764969617.5, good)])
+    result = reader(_fs_ctx(root, [Indicator("com.spy.agent", "fixture", "primary", "app-id", "fixture")]))
+    assert any(h.indicator == "com.spy.agent" for h in result.hits)
+    assert "1 analytics record" in _gaps(result).get("ios:keychain-analytics", "")

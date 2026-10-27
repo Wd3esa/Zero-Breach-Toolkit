@@ -1123,15 +1123,19 @@ def _defang_text(text: str, indicator: str) -> str:
 # helpline. Control characters, Unicode line separators and bidirectional
 # overrides (which can visually reverse a line without any newline) are
 # replaced, and newlines collapse to spaces so a field can never begin a line of
-# its own. The JSON report keeps the raw evidence.
+# its own. Invisible formatting characters (zero-width spaces and joiners,
+# direction marks, the byte-order mark) are removed, so text cannot hide
+# anything or look different from what it is; Persian and Arabic words and
+# emoji still read correctly without them. The JSON report keeps the raw evidence.
 _UNSAFE_CHARS = re.compile(
     "[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]")
+_INVISIBLE_CHARS = re.compile("[\xad\u180e\u200b-\u200f\u2060-\u2064\ufeff]")
 
 
 def _safe_text(value, limit=2000):
     text = str(value).replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
     text = text.encode("utf-8", "backslashreplace").decode("utf-8")
-    text = _UNSAFE_CHARS.sub("�", text)
+    text = _UNSAFE_CHARS.sub("�", _INVISIBLE_CHARS.sub("", text))
     return text if len(text) <= limit else text[:limit] + "…"
 
 

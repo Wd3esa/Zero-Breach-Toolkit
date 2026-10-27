@@ -303,18 +303,19 @@ INSTRUCTIONS_FOR_ASSISTANTS = [
     "Exit code 3 means checks were missing, not that the device is clean.",
 ]
 
-_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f  ‪-‮⁦-⁩]")
+_CONTROL = re.compile("[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029\u202a-\u202e\u2066-\u2069]")
+_INVISIBLE = re.compile("[\xad\u180e\u200b-\u200f\u2060-\u2064\ufeff]")
 MAX_UNTRUSTED_LEN = 2000
 
 
 def sanitize_untrusted(value: Any) -> Any:
-    """Make scanned text safe to print and to hand to an AI: replace control and
-    bidirectional-override characters (terminal escape sequences, text that
-    renders differently from what it is) and cap the length. Non-strings pass
-    through."""
+    """Make scanned text safe to print and to hand to an AI: replace control,
+    bidirectional-override and invisible formatting characters (terminal escape
+    sequences, text that renders differently from what it is) and cap the
+    length. Non-strings pass through."""
     if not isinstance(value, str):
         return value
-    clean = _CONTROL.sub("�", value)
+    clean = _CONTROL.sub("�", _INVISIBLE.sub("", value))
     if len(clean) > MAX_UNTRUSTED_LEN:
         clean = clean[:MAX_UNTRUSTED_LEN] + "…[truncated]"
     return clean

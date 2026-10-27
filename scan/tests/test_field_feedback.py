@@ -173,3 +173,13 @@ def test_android_file_fingerprint_coverage_is_reported(tmp_path, records, expect
     assert any(c.name == "android:files" and c.ran for c in r.checks)
     hashes = [c for c in r.checks if c.name == "android:file-hashes"]
     assert hashes and hashes[0].ran is expected
+
+
+def test_invisible_characters_are_removed_from_report_and_handoff_text():
+    from zbtriage import contract, report
+    hidden = "​‍⁠fearevolve.com​‍⁠﻿­‎"
+    for clean in (report._safe_text(hidden), contract.sanitize_untrusted(hidden)):
+        assert clean == "fearevolve.com"
+    persian = "می‌خواهم"
+    assert report._safe_text(persian) == persian.replace("‌", "")
+    assert "�" in report._safe_text("a\x1b[31mb‮c")

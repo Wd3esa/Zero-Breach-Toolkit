@@ -520,7 +520,10 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
         unreadable = 0
         for table in event_tables:
             for row_id, row in sql_rows(key, check, table, ("data",), ("timestamp",)):
-                doc = _is_plist(row[0]) if isinstance(row[0], bytes) else None
+                try:
+                    doc = _is_plist(row[0]) if isinstance(row[0], bytes) else None
+                except (ValueError, plistlib.InvalidFileException):
+                    doc = None
                 if not isinstance(doc, dict):
                     unreadable += 1
                     continue

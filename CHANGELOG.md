@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Invisible formatting characters (zero-width spaces and joiners, direction marks) are
+  removed from the readable report and from text handed to an assistant, so scanned text
+  cannot hide anything; the JSON report keeps the raw evidence.
+- iPhone: one unreadable security analytics record no longer stops the rest of that file.
+
 ## 0.1.2 (2026-10-27)
 
 iPhone
