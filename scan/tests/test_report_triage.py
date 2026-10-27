@@ -79,8 +79,21 @@ class TestReportTriage(unittest.TestCase):
         text = self.summary([self.hit("delivery", EV_CONFIGURED)])
         self.assert_self_review(text)
         self.assertIn("check who or what created it and why", text)
-        self.assertIn("An ordinary ad impression does not explain a local hosts-file entry", text)
+        self.assertIn("An ordinary ad impression does not explain a local configuration entry", text)
         self.assertNotIn("A connection can result from an ordinary ad", text)
+
+    def test_hosts_file_configuration_names_the_hosts_file(self):
+        hit = self.hit("delivery", EV_CONFIGURED)
+        hit.location = "/etc/hosts"
+        self.assertIn("does not explain a local hosts-file entry", self.summary([hit]))
+
+    def test_one_indicator_in_many_records_is_counted_once(self):
+        hits = [self.hit("delivery", EV_CONTACTED) for _ in range(12)]
+        for n, hit in enumerate(hits):
+            hit.location = "record {}".format(n)
+        text = self.summary(hits)
+        self.assertIn("1 indicator to review, recorded in 12 places", text)
+        self.assertNotIn("12 findings", text)
 
     def test_legitimate_driver_alone_routes_to_software_context(self):
         text = self.summary([self.hit("vuln-driver", EV_ON_DISK)])

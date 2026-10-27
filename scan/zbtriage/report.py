@@ -1303,12 +1303,16 @@ def _next_steps(w, hits):
                              "at the time of this record. Check the saved date "
                              "against the cited research; an absent date leaves "
                              "that question unresolved.")
-        if any(h.get("evidence") == EV_CONFIGURED for h in hits):
+        configured = [h for h in hits if h.get("evidence") == EV_CONFIGURED]
+        if configured:
+            text = "For a configuration entry, check who or what created it and why. "
+            if any(h.get("tier") == "delivery" for h in configured):
+                # Only ad-delivery infrastructure has the ad-impression explanation.
+                where = ("hosts-file entry" if any("hosts" in str(h.get("location", "")).lower()
+                                                   for h in configured) else "configuration entry")
+                text += "An ordinary ad impression does not explain a local " + where + ". "
             w("")
-            _advice_paragraph(w, "For a configuration entry, check who or what "
-                             "created it and why. An ordinary ad impression "
-                             "does not explain a local hosts-file entry. "
-                             "Do not edit it merely to make this finding disappear.")
+            _advice_paragraph(w, text + "Do not edit it merely to make this finding disappear.")
         w("")
         _advice_paragraph(w, "Keep the report. If you cannot explain a finding, "
                          "ask trusted IT support for help interpreting it. "
@@ -1376,8 +1380,16 @@ def render_summary(document: Dict[str, Any]) -> str:
         elif action == 2:
             w("  RESULT: potentially SERIOUS finding - qualified review recommended.")
         else:
-            w("  RESULT: {} finding{} to review; start with the saved context.".format(
-                n, "" if n == 1 else "s"))
+            # Count what was found, not how many records repeat it: one app seen
+            # in a dozen databases is one thing to review, not twelve.
+            k = len({h.get("indicator") for h in serious})
+            if k == n:
+                w("  RESULT: {} finding{} to review; start with the saved context.".format(
+                    n, "" if n == 1 else "s"))
+            else:
+                w("  RESULT: {} indicator{} to review, recorded in {} places; start with".format(
+                    k, "" if k == 1 else "s", n))
+                w("          the saved context.")
         if benign:
             nb = len(benign)
             w("          ({} further match{} {} only {} in saved page "
