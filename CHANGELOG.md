@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- iPhone file-system extractions: security-framework analytics records (calling
+  processes and hosts) are checked.
 - iPhone: sites that stored data in an app's web view (LocalStorage, IndexedDB and the
   iOS 16+ `origin` files) are checked, in file-system extractions and backups.
 - macOS: a folder blocked by macOS privacy protection (Safari's records, some app

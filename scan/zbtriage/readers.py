@@ -237,6 +237,7 @@ READER_SPECS = (
                         "ios:id-status-cache": "accounts looked up by iMessage and FaceTime",
                         "ios:favicons": "page and icon addresses stored by Safari and Chromium browsers",
                         "ios:webkit-origins": "sites that stored data in an app's web view (LocalStorage, IndexedDB, WebsiteData origins)",
+                        "ios:keychain-analytics": "calling processes and strings in security-framework analytics records (file-system extractions)",
                         "ios:profiles": "profile configuration identifiers",
                         "ios:profile-events": "historical profile identifiers",
                         "ios:profile-settings": "literal references in device-management settings",

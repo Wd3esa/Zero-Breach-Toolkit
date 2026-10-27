@@ -72,6 +72,7 @@ you are entitled to examine.
 | iMessage/FaceTime lookups | `idstatuscache.plist` (Preferences, or IdentityServices from iOS 14.7): `mailto:` accounts matched to email indicators, with the lookup date; a lookup does not show who started the contact |
 | Browser favicons | Safari `Favicons.db` (`page_url`, `icon_info`) and Chromium `Favicons` (`icon_mapping`, `favicons`); page and icon addresses are references |
 | Web view site data | Sites that stored data in an app's web view or Safari View Service: `LocalStorage/*.localstorage` and `IndexedDB/v1/<site>` names, and from iOS 16 the `origin` file in each `WebsiteData/Default` folder; graded contacted. Local app pages (`file:` and app schemes) are skipped |
+| Security analytics | File-system extractions only: `private/var/Keychains/Analytics/*.db` failure and note records (`Caller` and other identifiers, plus any host in the record), with the record time; device-log grade |
 | WebKit resource plists | Literal string references; unsupported typed layouts are gaps |
 | Sysdiagnose `ps.txt` | Executable path and name of every process running at capture time (graded as present on the device); command lines are searched for references |
 | `mobile_installation.log` and rotations | App identifiers in install records and container creation, container paths. An app installed as a developer build goes under "worth a look" with its usual explanation |

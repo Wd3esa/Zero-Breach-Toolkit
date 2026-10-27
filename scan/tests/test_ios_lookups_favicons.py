@@ -113,3 +113,40 @@ def test_damaged_origin_record_is_a_gap(tmp_path, reader):
     backup(root, [("AppDomain-com.example.app", WEBKIT + "Default/d/d/origin", b"\x05\x00\x00\x00\x01htt")])
     result = reader(_ctx(root))
     assert "ios:webkit-origins" in _gaps(result)
+
+
+def _analytics_fs(tmp_path, rows):
+    import sqlite3
+    root = tmp_path / "fs"
+    folder = root / "private" / "var" / "Keychains" / "Analytics"
+    folder.mkdir(parents=True)
+    con = sqlite3.connect(folder / "trust_analytics.db")
+    con.execute("CREATE TABLE hard_failures(id INTEGER PRIMARY KEY, timestamp REAL, data BLOB)")
+    con.executemany("INSERT INTO hard_failures(timestamp, data) VALUES(?, ?)", rows)
+    con.commit()
+    con.close()
+    (root / "private" / "var" / "mobile").mkdir(parents=True)
+    return root
+
+
+def _fs_ctx(root, indicators):
+    return ScanContext(IocSet(indicators, "fixture", None), phone_path=str(root), ios_input="filesystem",
+                       emit=lambda _: None)
+
+
+def test_keychain_analytics_caller_and_host(tmp_path, reader):
+    record = plistlib.dumps({"Caller": "com.spy.agent", "eventType": "TrustEvaluationEvent",
+                             "Hostname": "https://" + DOMAIN + "/"}, fmt=plistlib.FMT_BINARY)
+    root = _analytics_fs(tmp_path, [(1764969616.5, record)])
+    result = reader(_fs_ctx(root, [Indicator("com.spy.agent", "fixture", "primary", "app-id", "fixture"),
+                                   Indicator(DOMAIN, "fixture", "primary", "domain", "fixture")]))
+    found = {(h.indicator, h.evidence) for h in result.hits}
+    assert ("com.spy.agent", "device-log") in found and (DOMAIN, "device-log") in found
+    assert any(h.observed.startswith("2025-12-05") for h in result.hits)
+    assert "ios:keychain-analytics" not in _gaps(result)
+
+
+def test_keychain_analytics_unreadable_record_is_a_gap(tmp_path, reader):
+    root = _analytics_fs(tmp_path, [(1764969616.5, b"not a property list")])
+    result = reader(_fs_ctx(root, [Indicator(DOMAIN, "fixture", "primary", "domain", "fixture")]))
+    assert "ios:keychain-analytics" in _gaps(result)

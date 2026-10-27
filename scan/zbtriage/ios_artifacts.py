@@ -122,6 +122,13 @@ def _ia_walk(obj):
             yield path, value
 
 
+def _ia_unix_iso(value):
+    try:
+        return datetime.datetime.fromtimestamp(float(value), datetime.timezone.utc).isoformat(timespec="seconds")
+    except (TypeError, ValueError, OverflowError, OSError):
+        return ""
+
+
 def _ia_webkit_name_host(name):
     """'https_www.example.com_0' (scheme, host, port joined by '_') -> host.
     "" for a local page inside the app (file, asset... schemes); None when the
@@ -175,6 +182,10 @@ def _ia_artifact_kind(domain, path, kind):
                                             "SysSharedContainerDomain-systemgroup.com.apple.configurationprofiles")
     if mobile and base == "sms.db":
         return "messages-extra"
+    # Security-framework analytics in a file-system extraction (MVT: Analytics):
+    # failure and note records name the calling process and sometimes a host.
+    if "keychains/analytics/" in low and base.endswith(".db"):
+        return "keychain-analytics"
     if (kind != "backup" or "safari" in domain.lower() or domain == "HomeDomain") and base in (
             "BrowserState.db", "SafariTabs.db", "CloudTabs.db"):
         return "browser-state"
@@ -495,6 +506,40 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
                 r.ran(check)
             except (ValueError, OSError, sqlite3.Error) as exc:
                 gap(check, "message metadata unreadable: " + str(exc))
+
+    def keychain_analytics(key, check):
+        con = source.open_database(*key, check)
+        try:
+            with query(con, "SELECT name FROM sqlite_master WHERE type='table' "
+                            "AND name IN ('hard_failures', 'soft_failures', 'notes')") as cur:
+                event_tables = [row[0] for row in cur.fetchall()]
+        finally:
+            con.close()
+        if not event_tables:
+            return  # an analytics file without event records holds nothing to match
+        unreadable = 0
+        for table in event_tables:
+            for row_id, row in sql_rows(key, check, table, ("data",), ("timestamp",)):
+                doc = _is_plist(row[0]) if isinstance(row[0], bytes) else None
+                if not isinstance(doc, dict):
+                    unreadable += 1
+                    continue
+                observed = _ia_unix_iso(row[1])
+                record = table + " " + str(row_id)
+                for field, value in _ia_walk(doc):
+                    if not isinstance(value, str):
+                        continue
+                    name = field[-1] if field else ""
+                    text_matches(value, key, check, record,
+                                 "string in a security analytics record; contact and execution unverified",
+                                 EV_DEVICE_LOG, observed, str(row[1] or ""))
+                    if name in ("Caller", "process", "processName", "bundleID", "bundleId", "appBundleId"):
+                        typed(value, ("process", "app-id"), key, check, record,
+                              "calling process in a security analytics record; executable contents unverified",
+                              EV_DEVICE_LOG, observed, str(row[1] or ""))
+                r.checked += 1
+        if unreadable:
+            gap(check, "{} analytics record(s) in an unsupported format were not read".format(unreadable))
 
     def webkit_origin(key, check):
         path = key[1]
@@ -895,6 +940,8 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
                 connection_artifact(key, check)
             elif kind == "webkit-origins":
                 webkit_origin(key, check)
+            elif kind == "keychain-analytics":
+                keychain_analytics(key, check)
             elif kind in ("analytics", "profiles", "profile-events", "profile-settings", "location-clients",
                           "preferences", "app-metadata", "webkit-session", "id-status-cache"):
                 plist_artifact(key, kind, check)
