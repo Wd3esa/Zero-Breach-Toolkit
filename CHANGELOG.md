@@ -1,6 +1,37 @@
 # Changelog
 
-## 0.1.0 (not yet released)
+## 0.1.1 (2026-10-27)
+
+iPhone
+- Encrypted backups from real devices are read correctly. Files whose recorded size
+  differs from the copied data (live databases) and iCloud-only files no longer fail.
+- Supports the table layouts used by iOS 15 to 18 for WebKit statistics, Calendar,
+  Shortcuts and Calls; Safari tabs and iCloud tabs; the iOS 18 network-usage database.
+- Installed configuration profiles and profile install history; calendar participants;
+  privacy-permission clients compared as process names; connection records of
+  Chromium-based iPhone browsers and Brave's site list.
+- Sysdiagnose: memory-pressure, stackshot and text reports, running processes and
+  installation logs (apps installed as developer builds are listed as worth a look).
+- Fewer false gaps on real phones, and every record limit that is reached is reported.
+
+Computers
+- More browsers on Windows, macOS and Linux: Chrome, Edge and Brave beta/dev/canary
+  channels, Opera, Opera GX, Arc, Yandex, LibreWolf, Waterfox, Floorp, Zen, Pale Moon and
+  Tor Browser.
+- macOS: Safari cookies, HSTS, tabs, iCloud tabs, cache, bookmarks, downloads, Top Sites
+  and closed tabs; Terminal session history; desktop apps such as Signal; launch items
+  matched by process name. The hosts file is checked on macOS and Linux.
+- Desktop-app discovery has no fixed depth limit.
+- Reports never replace existing files in app data or app cache folders.
+
+Android
+- Process lists from older AndroidQF versions, MMS text, and only received messages
+  graded "received". Certificate coverage counts SHA-256 and SHA-1 separately.
+
+Reports
+- The summary counts each indicator once, with the number of places it was recorded.
+
+## 0.1.0 (2026-10-27)
 
 First version of Zero Breach Toolkit, built on Zero Breach.
 
