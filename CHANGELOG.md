@@ -1,20 +1,25 @@
 # Changelog
 
-## Unreleased
+## 0.1.4 (2026-10-28)
 
-- Guided Android collection: press Enter to save it on the Desktop instead of choosing a folder.
-- README: a simpler step-by-step guide per device (Windows, Mac, Android, iPhone) with a troubleshooting table.
-- Linux: translated user folders (for example `~/Téléchargements` or an Arabic desktop
-  folder) are found from `user-dirs.dirs` and fingerprinted; Snap Brave, Opera and Vivaldi
-  (data in the current revision folder), Firefox 147's `~/.config/mozilla/firefox` profiles
-  and Flatpak Firefox's newer layout are checked.
-- iPhone support is no longer labelled experimental: it has been checked against real
-  iOS 15 to 18 backups, file-system extractions and sysdiagnose archives.
+Linux
+- Translated user folders (for example `~/Téléchargements` or an Arabic desktop folder) are
+  found from `user-dirs.dirs` and fingerprinted.
+- Snap Brave, Opera and Vivaldi (data in the current revision folder), Firefox 147's
+  `~/.config/mozilla/firefox` profiles and Flatpak Firefox's newer layout are checked.
+
+Phones
+- iPhone support is no longer labelled experimental: it has been checked against real iOS
+  15 to 18 backups, file-system extractions and sysdiagnose archives.
+- Guided Android collection: press Enter to save it on the Desktop.
+
+Updates and housekeeping
 - `--update --accept-shrink SOURCE_ID` accepts a source whose list genuinely shrank by more
   than half; without it such an update is still refused.
 - The AndroidQF download uses the same generic user agent as indicator updates.
-- Invisible characters in the source code are written as visible `\u` escapes.
-- No deprecation warnings on Python 3.12 and later (UTC timestamps).
+- No deprecation warnings on Python 3.12 and later; invisible characters in the source are
+  written as visible `\u` escapes.
+- README: a simpler step-by-step guide for each device, with a troubleshooting table.
 
 ## 0.1.3 (2026-10-27)
 

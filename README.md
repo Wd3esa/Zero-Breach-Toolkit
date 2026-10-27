@@ -270,7 +270,7 @@ and sysdiagnose archives. See
 
 ### Indicators
 
-About 12,400 published indicators from 25 sources: Amnesty International's Security Lab,
+About 12,400 published indicators from 29 sources: Amnesty International's Security Lab,
 the [Mobile Verification Toolkit](https://github.com/mvt-project/mvt-indicators) project,
 the Citizen Lab and Echap's stalkerware research, and a hand-curated set from Citizen Lab
 reports (Candiru / DevilsTongue and Paragon's Graphite) with every line cited. The curated
@@ -334,13 +334,13 @@ The single-file `zero-breach-toolkit.py` attached to a release is generated from
 source. Rebuild it from the release's tag and compare:
 
 ```
-git checkout v0.1.3
+git checkout v0.1.4
 python build/bundle.py
 python -c "import hashlib; print(hashlib.sha256(open('dist/zero-breach-toolkit.py','rb').read()).hexdigest())"
 ```
 
-For v0.1.3 the file is 915,835 bytes, SHA-256
-`9495feb4b63f1866203b1ccd49c0ad0c282adc889bc91db0ec8b7ee604bab683`. The size and SHA-256
+For v0.1.4 the file is 920,430 bytes, SHA-256
+`e1404e4a5602205a4a3f806ec538486d48363d97ff56e15a3256ec96aa1aaa67`. The size and SHA-256
 published with each release are authoritative. The build is deterministic, so a matching
 rebuild means the published file contains that source and nothing else. Releases are also
 GPG-signed; see [docs/VERIFYING.md](docs/VERIFYING.md).
@@ -593,6 +593,19 @@ Windows, macOS, Linux, Android (AndroidQF collections) and iPhone (local backups
 [docs/COVERAGE.md](docs/COVERAGE.md) for what each check reads and its limits. Built-in
 readers share one registry for platform selection, coverage descriptions and the
 single-file build; see [scan/READERS.md](scan/READERS.md) to add one.
+
+## Where the code is
+
+There is no `src` folder; the code is under [`scan/`](scan/):
+
+- [`scan/zero-breach-toolkit.py`](scan/zero-breach-toolkit.py): the entry point you run.
+- [`scan/zbtriage/`](scan/zbtriage/): the scanner (indicator loading, the network block,
+  reporting). The package keeps the project's earlier name so existing installs keep working.
+- [`scan/zbtriage/modules/`](scan/zbtriage/modules/): one file per check (browsers, Windows
+  records, macOS and Linux, Android, iPhone, file fingerprints).
+- [`scan/tests/`](scan/tests/): the test suite.
+- [`build/bundle.py`](build/bundle.py): builds the single file attached to each release from
+  this source (see [Verify what you run](#verify-what-you-run)).
 
 ## Credits
 
