@@ -1452,7 +1452,12 @@ def run(ctx) -> ModuleResult:
             if doc is None:
                 continue
             try:
-                if kind == "safari-downloads" and isinstance(doc, dict):
+                # Download records are graded per record only in the known
+                # layout; any other shape keeps its URLs as references and is
+                # reported as a gap.
+                graded = (kind == "safari-downloads" and isinstance(doc, dict)
+                          and isinstance(doc.get("DownloadHistory", []), list))
+                if graded:
                     # Each download record is graded by its own bytes: one that
                     # received data contacted its host, one that received none
                     # was only attempted. A URL repeated across records keeps
@@ -1469,14 +1474,18 @@ def run(ctx) -> ModuleResult:
                                        "execution unverified", evidence)
                         r.checked += 1
                 for key, value in _safari_plist_strings(doc):
-                    if key == "DownloadEntryURL" and kind == "safari-downloads":
+                    if key == "DownloadEntryURL" and graded:
                         continue
                     if not value.lower().startswith(("http://", "https://")):
                         continue
                     for ind, evidence in _browser_url_evidence(value, ctx.iocs, EV_REFERENCED):
                         record_hit(path, ind, what + "; a saved reference, not proof of a visit", evidence)
                     r.checked += 1
-                mark_ok(label, kind)
+                if kind == "safari-downloads" and not graded:
+                    mark_fail(label, kind, name + ": unsupported layout; its addresses were "
+                              "checked as references only")
+                else:
+                    mark_ok(label, kind)
             except (ValueError, RecursionError) as exc:
                 mark_fail(label, kind, os.path.basename(path) + ": " + str(exc))
 

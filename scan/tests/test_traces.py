@@ -313,3 +313,17 @@ class OneCheckFailing(unittest.TestCase):
         self.assertIn("RuntimeError", gaps["run-history"])
         self.assertTrue(any(c.name == "powershell-history" for c in r.checks))
         self.assertTrue(any(c.name == "ran-programs" for c in r.checks))
+
+
+class PartlyDoneCheckFailing(unittest.TestCase):
+    """A check that recorded success and then failed is incomplete, not clean."""
+
+    def test_later_failure_marks_the_check_incomplete(self):
+        def half(r, ctx, leads):
+            r.ran("powershell-history")
+            raise ValueError("second source broke")
+
+        with patch.object(traces, "_tr_check_powershell", half):
+            r = run()
+        self.assertTrue(any(c.name == "powershell-history" and not c.ran for c in r.checks))
+        self.assertNotEqual(r.status, CLEAN)

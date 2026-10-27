@@ -153,3 +153,12 @@ def test_report_cannot_replace_safari_sandbox_files(tmp_path, monkeypatch, safet
         with pytest.raises(ValueError):
             guard(args, str(target))
         assert target.read_bytes() == before
+
+
+def test_unsupported_download_layout_is_a_gap_and_urls_stay_references(tmp_path, monkeypatch, safety_api):
+    root = _safari(tmp_path)
+    (root / "Downloads.plist").write_bytes(plistlib.dumps({"DownloadHistory": {
+        "one": {"DownloadEntryURL": "https://got.invalid/a.pkg", "DownloadEntryProgressBytesSoFar": 1024}}}))
+    result = _run(safety_api, monkeypatch, root)
+    assert [h.evidence for h in result.hits if h.indicator == "got.invalid"] == ["referenced"]
+    assert any(not c.ran and "safari-downloads" in c.name for c in result.checks)

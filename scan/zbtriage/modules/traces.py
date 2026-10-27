@@ -1108,11 +1108,11 @@ def run(ctx) -> ModuleResult:
         try:
             return fn(*args)
         except Exception as exc:  # noqa: BLE001
-            done = {c.name for c in r.checks}
+            # Recorded even if part of the check already succeeded: the rest of
+            # its records were not checked, so it must not read as complete.
             for check in checks:
-                if check not in done:
-                    r.could_not_run(check, "stopped unexpectedly ({}: {}); these records "
-                                    "were not checked".format(type(exc).__name__, str(exc)[:160]))
+                r.could_not_run(check, "stopped unexpectedly ({}: {}); some of these records "
+                                "were not checked".format(type(exc).__name__, str(exc)[:160]))
             return None
 
     ctx.emit("[*]   traces: files' download origins (Mark of the Web)")
