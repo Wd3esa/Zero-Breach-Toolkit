@@ -378,6 +378,9 @@ def _bundle_main(argv=None):
                         "user's cache, then exit (separate from offline scanning)")
     p.add_argument("--indicator-cache", metavar="DIR", default=None,
                    help="where downloaded indicator sets are kept")
+    p.add_argument("--accept-shrink", metavar="SOURCE_ID", action="append", default=[],
+                   help="with --update: accept a source whose indicator count fell by more "
+                        "than half (normally refused, keeping the previous copy)")
     p.add_argument("--no-feeds", action="store_true",
                    help="scan with the embedded indicator set only")
     p.add_argument("--phone", metavar="FOLDER",
@@ -445,7 +448,7 @@ def _bundle_main(argv=None):
             print("error: --json must be a path on a local disk", file=sys.stderr)
             _hold(args)
             return 1
-        code = update_command(args.indicator_cache, args.json)
+        code = update_command(args.indicator_cache, args.json, args.accept_shrink)
         _hold(args)
         return code
 

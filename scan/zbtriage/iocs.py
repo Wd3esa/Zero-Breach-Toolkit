@@ -800,7 +800,7 @@ def load(path: str) -> IocSet:
     asof: Optional[str] = None
     # utf-8-sig, not utf-8: Windows editors save a byte-order mark, and U+FEFF is
     # not whitespace to str.strip(). With plain utf-8 the first indicator in a
-    # user's own list silently became "﻿controlium.net", matched nothing,
+    # user's own list silently became "\ufeffcontrolium.net", matched nothing,
     # and the scan then reported finding nothing without ever having looked.
     for lineno, raw in _ioc_curated_lines(path):
         line = raw.strip()
@@ -829,8 +829,8 @@ def load(path: str) -> IocSet:
         if confidence not in VALID_CONFIDENCE:
             raise IocError(
                 "line {}: unknown confidence {!r}".format(lineno, confidence))
-        if value.startswith("﻿") or any(
-                c in value for c in "​‌‍⁠"):
+        if value.startswith("\ufeff") or any(
+                c in value for c in "\u200b\u200c\u200d\u2060"):
             raise IocError("line {}: invisible character in {!r} - the "
                            "file was probably re-saved by an editor".format(
                                lineno, value))

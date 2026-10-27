@@ -138,7 +138,7 @@ class TestLoaderRobustness(unittest.TestCase):
         p = self._write("controlium.net\tdelivery\tprimary\tt\n", "utf-8-sig")
         s = iocmod.load(p)
         self.assertEqual(s.indicators[0].value, "controlium.net")
-        self.assertFalse(s.indicators[0].value.startswith("﻿"))
+        self.assertFalse(s.indicators[0].value.startswith("\ufeff"))
         self.assertTrue(s.search("go to controlium.net now"))
 
     def test_empty_file_is_refused(self):
@@ -147,7 +147,7 @@ class TestLoaderRobustness(unittest.TestCase):
             iocmod.load(p)
 
     def test_zero_width_character_in_indicator_is_rejected(self):
-        p = self._write("contro​lium.net\tdelivery\tprimary\tt\n", "utf-8")
+        p = self._write("contro\u200blium.net\tdelivery\tprimary\tt\n", "utf-8")
         with self.assertRaises(iocmod.IocError):
             iocmod.load(p)
 

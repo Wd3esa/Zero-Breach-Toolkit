@@ -63,7 +63,7 @@ class ScanContext:
 def _ctx_printable(message):
     text = str(message)
     return "".join("?" if (ord(c) < 32 and c not in "\t\n") or 0x7f <= ord(c) <= 0x9f
-                   or c in "‎‏‪‫‬‭‮⁦⁧⁨⁩"
+                   or c in "\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069"
                    else c for c in text)
 
 

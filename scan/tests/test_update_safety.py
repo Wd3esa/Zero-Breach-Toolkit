@@ -102,3 +102,30 @@ def test_interrupted_update_keeps_finished_sources_usable(tmp_path):
         entry = manifest[sid]
         with open(os.path.join(cache, entry["file"]), "rb") as fh:
             assert feeds._feed_sha256(fh.read()) == entry["sha256"]
+
+
+def test_a_genuine_shrink_can_be_accepted_for_that_source_only(tmp_path):
+    cache = str(tmp_path)
+    feeds.update(cache, [_src()], fetch=lambda u: _body(100))
+    refused = feeds.update(cache, [_src()], fetch=lambda u: _body(10))
+    assert refused["failed"] == 1 and "--accept-shrink t" in refused["sources"][0]["error"]
+    accepted = feeds.update(cache, [_src()], fetch=lambda u: _body(40), accept_shrink=["t"])
+    assert accepted["failed"] == 0
+    assert feeds.read_manifest(cache)["t"]["indicators"] == 40
+    other = feeds.update(cache, [_src()], fetch=lambda u: _body(10), accept_shrink=["someone-else"])
+    assert other["failed"] == 1
+
+
+def test_accept_shrink_with_an_unknown_source_is_an_error(tmp_path, capsys):
+    assert feeds.update_command(str(tmp_path), None, ["no-such-source"]) == 1
+    assert "unknown source id" in capsys.readouterr().err
+
+
+def test_no_network_request_names_the_tool():
+    import glob
+    import re
+    root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "zbtriage")
+    for path in glob.glob(os.path.join(root, "**", "*.py"), recursive=True):
+        text = open(path, encoding="utf-8").read()
+        for agent in re.findall(r'"User-Agent":\s*"([^"]*)"', text):
+            assert "zero" not in agent.lower() and "breach" not in agent.lower(), (path, agent)

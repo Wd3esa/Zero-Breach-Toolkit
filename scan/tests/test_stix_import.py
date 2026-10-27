@@ -170,7 +170,7 @@ class TestHostileValues(unittest.TestCase):
                         "[ipv6-addr:value='::1']",
                         "[ipv4-addr:value='203.0.113.7']",
                         "[file:hashes.sha256='abc']",
-                        "[domain-name:value='bad​zero.example']"):
+                        "[domain-name:value='bad\u200bzero.example']"):
             with self.subTest(pattern=pattern):
                 kept, refused = self.refused(pattern)
                 self.assertEqual(kept, ["keep.example"])

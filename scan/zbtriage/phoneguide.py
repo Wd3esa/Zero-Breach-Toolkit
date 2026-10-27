@@ -55,7 +55,7 @@ def _phone_download(asset, digest, dest):
     if problem:
         raise ValueError("download path refused: " + problem)
     opener = urllib.request.build_opener(_PhoneRedirect())
-    req = urllib.request.Request(_PHONE_RELEASE + asset, headers={"User-Agent": "Zero-Breach-Toolkit"})
+    req = urllib.request.Request(_PHONE_RELEASE + asset, headers={"User-Agent": "Mozilla/5.0"})
     actual, count = hashlib.sha256(), 0
     with opener.open(req, timeout=60) as response, open(dest, "xb") as out:
         if not _phone_download_url_ok(response.geturl()):

@@ -344,7 +344,8 @@ def _write_manifest(cache: str, entries: Dict[str, Dict[str, object]]) -> None:
 
 def update(cache: Optional[str] = None, sources: Optional[List[Dict[str, str]]] = None,
            fetch: Callable[[str], bytes] = _fetch,
-           emit: Callable[[str], None] = lambda s: None) -> Dict[str, object]:
+           emit: Callable[[str], None] = lambda s: None,
+           accept_shrink: Optional[List[str]] = None) -> Dict[str, object]:
     """Download every source; keep the previous copy of any that fails.
     Returns a summary: per source ok / unchanged / failed, with counts."""
     cache = cache or default_cache_dir()
@@ -389,8 +390,12 @@ def update(cache: Optional[str] = None, sources: Optional[List[Dict[str, str]]] 
                 before = old.get("indicators") if isinstance(old, dict) else None
                 if type(before) is int and before > 0 and (
                         len(parsed) == 0 or (before >= 20 and len(parsed) < before // 2)):
-                    raise IocError("indicator count fell from {} to {}; the previous copy was kept. "
-                                   "Check the source before trusting the new list".format(before, len(parsed)))
+                    if src["id"] not in (accept_shrink or ()):
+                        raise IocError("indicator count fell from {} to {}; the previous copy was kept. "
+                                       "Check the source; if the change is genuine, accept it with "
+                                       "--update --accept-shrink {}".format(before, len(parsed), src["id"]))
+                    emit("[!] {}: indicator count fell from {} to {}; accepted as requested".format(
+                        src["name"], before, len(parsed)))
             except Exception:
                 os.unlink(tmp)
                 raise
@@ -483,14 +488,20 @@ def cached_sets(cache: Optional[str] = None) -> Tuple[List[IocSet], Dict[str, ob
     return sets, status
 
 
-def update_command(cache: Optional[str], json_path: Optional[str]) -> int:
+def update_command(cache: Optional[str], json_path: Optional[str],
+                   accept_shrink: Optional[List[str]] = None) -> int:
     """The `--update` command for both entry points (source CLI and single
     file). Prints a short summary; exit 0 only if every source succeeded."""
     from .report import write_json, _report_console
     try:
         if json_path and path_problem(os.path.abspath(json_path)):
             raise IocError("--json must be a path on a local disk")
-        summary = update(cache, emit=lambda s: _report_console(s, sys.stderr))
+        unknown = sorted(set(accept_shrink or ()) - {src["id"] for src in SOURCES})
+        if unknown:
+            raise IocError("--accept-shrink: unknown source id {}; the ids are listed in "
+                           "manifest.json in the indicator cache".format(", ".join(unknown)))
+        extra = {"accept_shrink": accept_shrink} if accept_shrink else {}
+        summary = update(cache, emit=lambda s: _report_console(s, sys.stderr), **extra)
     except IocError as exc:
         _report_console("error: {}".format(exc), sys.stderr)
         return 1

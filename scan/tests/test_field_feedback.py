@@ -193,9 +193,9 @@ def test_android_file_fingerprint_coverage_is_reported(tmp_path, records, expect
 
 def test_invisible_characters_are_removed_from_report_and_handoff_text():
     from zbtriage import contract, report
-    hidden = "​‍⁠fearevolve.com​‍⁠﻿­‎"
+    hidden = "\u200b\u200d\u2060fearevolve.com\u200b\u200d\u2060\ufeff\u00ad\u200e"
     for clean in (report._safe_text(hidden), contract.sanitize_untrusted(hidden)):
         assert clean == "fearevolve.com"
-    persian = "می‌خواهم"
-    assert report._safe_text(persian) == persian.replace("‌", "")
-    assert "�" in report._safe_text("a\x1b[31mb‮c")
+    persian = "می\u200cخواهم"
+    assert report._safe_text(persian) == persian.replace("\u200c", "")
+    assert "�" in report._safe_text("a\x1b[31mb\u202ec")

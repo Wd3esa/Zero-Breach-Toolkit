@@ -112,6 +112,9 @@ def _parse(argv: List[str]) -> argparse.Namespace:
     p.add_argument("--indicator-cache", metavar="DIR", default=None,
                    help="where downloaded indicator sets are kept (default: a "
                         "per-user cache folder)")
+    p.add_argument("--accept-shrink", metavar="SOURCE_ID", action="append", default=[],
+                   help="with --update: accept a source whose indicator count fell by more "
+                        "than half (normally refused, keeping the previous copy)")
     p.add_argument("--no-feeds", action="store_true",
                    help="scan with the built-in indicator set only, ignoring "
                         "downloaded sets")
@@ -174,7 +177,7 @@ def _refuse_remote(label: str, value: str) -> bool:
 
 def _run_update(args) -> int:
     """--update: an explicit network step, never part of a scan."""
-    return feeds.update_command(args.indicator_cache, args.json)
+    return feeds.update_command(args.indicator_cache, args.json, args.accept_shrink)
 
 
 def _main(argv: List[str] = None) -> int:

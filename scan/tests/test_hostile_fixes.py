@@ -84,8 +84,8 @@ def test_a_flood_of_matching_records_is_counted_not_listed():
 def test_progress_lines_cannot_carry_terminal_control_sequences():
     seen = []
     ctx = ScanContext(context().iocs, emit=seen.append)
-    ctx.emit("[*]   profile: \x1b[2J\x1b[31mevil‮eman")
-    assert "\x1b" not in seen[0] and "‮" not in seen[0]
+    ctx.emit("[*]   profile: \x1b[2J\x1b[31mevil\u202eeman")
+    assert "\x1b" not in seen[0] and "\u202e" not in seen[0]
     assert seen[0].startswith("[*]   profile: ")
 
 
