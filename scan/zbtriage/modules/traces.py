@@ -53,7 +53,7 @@ from urllib.parse import urlsplit
 
 from ..heuristics import CRADLE_GET, CRADLE_RUN, REMOTE, RUNNER
 from ..iocs import TYPE_SHA256
-from ..localpaths import path_problem, walk_local
+from ..localpaths import path_problem, walk_local, WALK_LINK_REFUSED, WALK_SPECIAL_REFUSED
 from ..result import (EV_ATTEMPTED, EV_COMMAND, EV_CONTACTED, EV_ON_DISK, Hit, Lead,
                       ModuleResult)
 
@@ -229,7 +229,9 @@ def _tr_check_motw(r, ctx):
     examined, stamped, stopped, oversize = 0, 0, False, 0
     unreadable = {"files": 0, "folders": 0, "deep": 0}
 
-    def onerror(_exc):
+    def onerror(exc):
+        if getattr(exc, "strerror", None) in (WALK_LINK_REFUSED, WALK_SPECIAL_REFUSED):
+            return  # links and special entries are not followed on purpose
         r.skipped += 1
         unreadable["folders"] += 1
 

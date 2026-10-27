@@ -24,6 +24,10 @@ from zbtriage.result import (CLEAN, EV_ATTEMPTED, EV_COMMAND, EV_CONTACTED, EV_O
                              HITS, ModuleResult)
 
 BAD = "bad-c2.example"
+# The run() helper pretends to be Windows by patching sys.platform, which the
+# local-path rules read too; off Windows the download-origin walk would then
+# refuse the temporary folder, so it is replaced there.
+_REAL_WINDOWS = sys.platform == "win32"
 
 
 SAMPLE = b"pretend spyware sample for the fingerprint test\n"
@@ -53,7 +57,8 @@ def run(motw_roots=None, runmru=({}, "", ""), events=None, programs=([], {})):
             patch.object(traces, "_tr_antivirus_products", lambda: ([{"name": "Fixture antivirus", "state": 0, "signature_status": 1}], "")), \
             patch.object(traces, "_tr_extra_history", lambda *a: None), \
             patch.object(traces, "_tr_persistence", lambda *a: None), \
-            patch.object(traces.sys, "platform", "win32"):
+            patch.object(traces.sys, "platform", "win32"),             patch.object(traces, "_tr_check_motw",
+                         traces._tr_check_motw if _REAL_WINDOWS else (lambda r, c: r.ran("mark-of-the-web"))):
         return traces.run(ctx())
 
 

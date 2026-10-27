@@ -24,7 +24,7 @@ import stat
 import sys
 
 from ..result import Hit, ModuleResult, EV_ON_DISK
-from ..localpaths import path_problem, walk_local
+from ..localpaths import path_problem, walk_local, WALK_LINK_REFUSED, WALK_SPECIAL_REFUSED
 
 NAME = "hash"
 
@@ -239,6 +239,13 @@ def run(ctx) -> ModuleResult:
         reasons = {"large": 0, "denied": 0, "unreadable": 0}
 
         def _walk_err(exc, _r=r, _t=tally, _w=reasons):
+            # Links and special entries are refused by the walker on purpose:
+            # not files that were missed (a link's target is fingerprinted where
+            # it lies inside a scanned folder), so they are counted, not gaps.
+            if getattr(exc, "strerror", None) in (WALK_LINK_REFUSED, WALK_SPECIAL_REFUSED):
+                key = "links_not_followed" if exc.strerror == WALK_LINK_REFUSED else "special_entries"
+                _r.submetrics[key] = _r.submetrics.get(key, 0) + 1
+                return
             # An unreadable subtree would otherwise vanish silently from os.walk.
             _r.skipped += 1
             _t["unreadable"] += 1
