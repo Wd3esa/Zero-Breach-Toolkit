@@ -162,3 +162,22 @@ def test_unsupported_download_layout_is_a_gap_and_urls_stay_references(tmp_path,
     result = _run(safety_api, monkeypatch, root)
     assert [h.evidence for h in result.hits if h.indicator == "got.invalid"] == ["referenced"]
     assert any(not c.ran and "safari-downloads" in c.name for c in result.checks)
+
+
+@pytest.mark.parametrize("doc", [
+    {"Downloads": [{"DownloadEntryURL": "https://got.invalid/a"}]},
+    {"DownloadHistory": [{"record": {"DownloadEntryURL": "https://got.invalid/a"}}]},
+    {"DownloadHistory": ["https://got.invalid/a"]},
+])
+def test_malformed_download_records_keep_their_urls_and_are_gaps(tmp_path, monkeypatch, safety_api, doc):
+    root = _safari(tmp_path)
+    (root / "Downloads.plist").write_bytes(plistlib.dumps(doc))
+    result = _run(safety_api, monkeypatch, root)
+    assert [h.evidence for h in result.hits if h.indicator == "got.invalid"] == ["referenced"]
+    assert any(not c.ran and "safari-downloads" in c.name for c in result.checks)
+
+
+def test_well_formed_downloads_are_not_a_gap(tmp_path, monkeypatch, safety_api):
+    root = _safari(tmp_path)
+    result = _run(safety_api, monkeypatch, root)
+    assert not any(not c.ran and "safari-downloads" in c.name for c in result.checks)

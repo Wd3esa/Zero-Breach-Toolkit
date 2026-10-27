@@ -27,6 +27,7 @@ PARTIAL/UNKNOWN with those gaps named, never to CLEAN.
 from __future__ import annotations
 
 import base64
+import collections
 import contextlib
 import datetime
 import hashlib
@@ -1452,38 +1453,46 @@ def run(ctx) -> ModuleResult:
             if doc is None:
                 continue
             try:
-                # Download records are graded per record only in the known
-                # layout; any other shape keeps its URLs as references and is
-                # reported as a gap.
-                graded = (kind == "safari-downloads" and isinstance(doc, dict)
-                          and isinstance(doc.get("DownloadHistory", []), list))
-                if graded:
-                    # Each download record is graded by its own bytes: one that
-                    # received data contacted its host, one that received none
-                    # was only attempted. A URL repeated across records keeps
-                    # every record's grade.
-                    history = doc.get("DownloadHistory")
+                # Download records are graded per record only in the known layout
+                # (a DownloadHistory list of records, each with its own URL).
+                # A URL is skipped by the reference pass only when such a record
+                # already graded it; every other URL stays a reference, and each
+                # record or layout that could not be graded is reported as a gap.
+                graded = collections.Counter()
+                unsupported = 0
+                if kind == "safari-downloads":
+                    history = doc.get("DownloadHistory") if isinstance(doc, dict) else None
+                    if history is not None and not isinstance(history, list):
+                        unsupported += 1
                     for entry in history if isinstance(history, list) else []:
                         url = entry.get("DownloadEntryURL") if isinstance(entry, dict) else None
                         if not isinstance(url, str):
+                            unsupported += 1
                             continue
+                        # Each record is graded by its own bytes: one that received
+                        # data contacted its host, one that received none was only
+                        # attempted. A URL repeated across records keeps every grade.
                         got = entry.get("DownloadEntryProgressBytesSoFar")
                         grade = EV_CONTACTED if type(got) is int and got > 0 else EV_ATTEMPTED
                         for ind, evidence in _browser_url_evidence(url, ctx.iocs, grade):
                             record_hit(path, ind, what + "; contact is graded by the bytes received; "
                                        "execution unverified", evidence)
+                        graded[url] += 1
                         r.checked += 1
                 for key, value in _safari_plist_strings(doc):
-                    if key == "DownloadEntryURL" and graded:
-                        continue
+                    if key == "DownloadEntryURL" and kind == "safari-downloads":
+                        if graded[value]:
+                            graded[value] -= 1
+                            continue
+                        unsupported += 1
                     if not value.lower().startswith(("http://", "https://")):
                         continue
                     for ind, evidence in _browser_url_evidence(value, ctx.iocs, EV_REFERENCED):
                         record_hit(path, ind, what + "; a saved reference, not proof of a visit", evidence)
                     r.checked += 1
-                if kind == "safari-downloads" and not graded:
-                    mark_fail(label, kind, name + ": unsupported layout; its addresses were "
-                              "checked as references only")
+                if unsupported:
+                    mark_fail(label, kind, "{}: {} download record(s) or field(s) in an unsupported "
+                              "layout; their addresses were checked as references only".format(name, unsupported))
                 else:
                     mark_ok(label, kind)
             except (ValueError, RecursionError) as exc:
