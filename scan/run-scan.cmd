@@ -1,5 +1,5 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal
 
 rem Interactive launcher. The scanner saves and displays its own report before
 rem offering follow-up actions. Quitting the start menu is not a scan result.
@@ -7,16 +7,13 @@ rem offering follow-up actions. Quitting the start menu is not a scan result.
 title Zero Breach Toolkit - spyware indicator check
 
 rem Run from this script's own folder, so the default IOC path resolves.
-cd /d "%~dp0"
+cd /d "%~dp0" || goto :nofolder
+if not exist "zero-breach-toolkit.py" goto :nofolder
 
 rem Find Python: the PATH first, then the py launcher.
 set "PY="
-where python >nul 2>&1
-if %errorlevel%==0 set "PY=python"
-if not defined PY (
-  where py >nul 2>&1
-  if !errorlevel!==0 set "PY=py"
-)
+where python >nul 2>&1 && set "PY=python"
+if not defined PY where py >nul 2>&1 && set "PY=py"
 if not defined PY (
   echo.
   echo  Python was not found on this PC.
@@ -79,10 +76,20 @@ if "%RC%"=="4" (
 )
 echo.
 if not "%RC%"=="4" (
-  if exist "%TXT%" echo   Saved: %TXT%
-  if exist "%JSON%" echo   Saved: %JSON%
+  if exist "%TXT%" echo   Saved: "%TXT%"
+  if exist "%JSON%" echo   Saved: "%JSON%"
 )
 echo ========================================================================
 echo.
 pause
 endlocal
+exit /b %RC%
+
+:nofolder
+echo.
+echo  The Zero Breach folder could not be opened, so nothing was checked.
+echo  Move the Zero-Breach-Toolkit folder somewhere simple, such as your
+echo  Desktop, and run run-scan.cmd again.
+echo.
+pause
+exit /b 1

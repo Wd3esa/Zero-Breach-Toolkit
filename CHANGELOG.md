@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Windows launcher (run-scan.cmd): report paths are printed in quotes, so a folder name containing "&" can no longer run an extra command, and a "!" in the folder name no longer breaks the launch (it could be reported as a match without any scan). If the scanner cannot be found, it now says nothing was checked.
+
 ## 0.1.4 (2026-10-28)
 
 Linux
