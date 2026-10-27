@@ -150,3 +150,11 @@ def test_keychain_analytics_unreadable_record_is_a_gap(tmp_path, reader):
     root = _analytics_fs(tmp_path, [(1764969616.5, b"not a property list")])
     result = reader(_fs_ctx(root, [Indicator(DOMAIN, "fixture", "primary", "domain", "fixture")]))
     assert "ios:keychain-analytics" in _gaps(result)
+
+
+@pytest.mark.parametrize("doc", [{}, {"CacheVersion": 1}])
+def test_empty_lookup_cache_is_fully_read(tmp_path, reader, doc):
+    root = tmp_path / "backup"
+    backup(root, [("HomeDomain", "Library/IdentityServices/idstatuscache.plist", plistlib.dumps(doc))])
+    result = reader(_ctx(root))
+    assert "ios:id-status-cache" not in _gaps(result)

@@ -694,7 +694,11 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
         # Settings files and the global preferences have no required typed
         # field: every string in them was searched, and an absent Lockdown
         # Mode key only means it was never configured.
-        if not recognized and kind not in ("profile-settings", "preferences"):
+        # A lookup cache with no service records (only CacheVersion, or nothing
+        # at all) is a phone that looked nobody up: fully read, not a new layout.
+        empty_cache = (kind == "id-status-cache" and isinstance(doc, dict)
+                       and not any(isinstance(v, dict) for v in doc.values()))
+        if not recognized and not empty_cache and kind not in ("profile-settings", "preferences"):
             gap(check, "unrecognized typed property-list schema; only literal references were searched")
 
     def process_name(value, key, check, record_id, detail, observed="", raw_time="", truncated_at=0,
