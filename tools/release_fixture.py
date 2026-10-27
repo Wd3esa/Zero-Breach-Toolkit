@@ -310,6 +310,8 @@ def main():
                 (patterns, "_pattern_roots", lambda: [str(files)]),
                 (host, "winreg", object()),
                 (host, "_ps_json", ps_json),
+                # The hosts file is read on every platform; keep it in the fixture.
+                (host, "_hosts_path", lambda: str(inputs / "System32" / "drivers" / "etc" / "hosts")),
                 (host, "_enum_com_registrations", lambda r: (entries, [])),
                 (host, "_network_drive_letters", lambda: (set(), True)),
                 (host, "_user_writable_dirs", lambda: [str(inputs)]),
