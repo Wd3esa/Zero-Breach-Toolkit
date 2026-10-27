@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `--update --accept-shrink SOURCE_ID` accepts a source whose list genuinely shrank by more
+  than half; without it such an update is still refused.
+- The AndroidQF download uses the same generic user agent as indicator updates.
+- Invisible characters in the source code are written as visible `\u` escapes.
 - No deprecation warnings on Python 3.12 and later (UTC timestamps).
 
 ## 0.1.3 (2026-10-27)
