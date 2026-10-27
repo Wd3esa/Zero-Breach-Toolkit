@@ -1,10 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.1.3 (2026-10-27)
 
 - A report never replaces an existing file in a folder the hash check reads, including a
-  file that looks like an earlier report (0.1.2 trusted such files; their content could be
-  forged). Choose a new filename instead.
+  file that looks like an earlier report (0.1.2 trusted such files, and their content
+  could be forged). Choose a new filename instead.
 - Invisible formatting characters (zero-width spaces and joiners, direction marks) are
   removed from the readable report and from text handed to an assistant, so scanned text
   cannot hide anything; the JSON report keeps the raw evidence.
