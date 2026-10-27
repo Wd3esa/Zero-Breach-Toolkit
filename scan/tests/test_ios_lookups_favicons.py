@@ -74,3 +74,42 @@ def test_chromium_favicons(tmp_path, reader):
     result = reader(_ctx(root))
     assert any(h.indicator == DOMAIN for h in result.hits)
     assert "ios:favicons" not in _gaps(result)
+
+
+def _origin_record(scheme, host):
+    def text(value):
+        data = value.encode("latin-1")
+        return len(data).to_bytes(4, "little") + b"\x01" + data
+    one = text(scheme) + text(host) + b"\x00"
+    return one + one
+
+
+WEBKIT = "Library/WebKit/WebsiteData/"
+
+
+@pytest.mark.parametrize("path,data", [
+    (WEBKIT + "Default/abc/abc/origin", _origin_record("https", DOMAIN)),
+    (WEBKIT + "LocalStorage/https_" + DOMAIN + "_0.localstorage", b"SQLite format 3\x00"),
+    (WEBKIT + "IndexedDB/v1/https_" + DOMAIN + "_0/1A2B/IndexedDB.sqlite3", b"SQLite format 3\x00"),
+])
+def test_site_that_stored_web_view_data_is_contact(tmp_path, reader, path, data):
+    root = tmp_path / "backup"
+    backup(root, [("AppDomain-com.example.app", path, data)])
+    result = reader(_ctx(root))
+    assert [h.evidence for h in result.hits if h.indicator == DOMAIN] == ["contacted"]
+    assert "ios:webkit-origins" not in _gaps(result)
+
+
+def test_local_app_pages_are_not_gaps(tmp_path, reader):
+    root = tmp_path / "backup"
+    backup(root, [("AppDomain-com.example.app", WEBKIT + "Default/f/f/origin", _origin_record("file", "")),
+                  ("AppDomain-com.example.app", WEBKIT + "LocalStorage/file__0.localstorage", b"x")])
+    result = reader(_ctx(root))
+    assert "ios:webkit-origins" not in _gaps(result) and not result.hits
+
+
+def test_damaged_origin_record_is_a_gap(tmp_path, reader):
+    root = tmp_path / "backup"
+    backup(root, [("AppDomain-com.example.app", WEBKIT + "Default/d/d/origin", b"\x05\x00\x00\x00\x01htt")])
+    result = reader(_ctx(root))
+    assert "ios:webkit-origins" in _gaps(result)

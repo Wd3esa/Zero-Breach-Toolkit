@@ -485,4 +485,5 @@ def _is_archive_candidate(name):
     return (base.endswith((".ips", ".crash", ".plist", ".mobileconfig", ".stub", ".sqlite", ".db", ".storedata", ".sqlitedb",
                            ".db-wal", ".sqlite-wal", ".storedata-wal", ".sqlitedb-wal"))
             or base.startswith(("shutdown.log", "mobile_installation.log")) or base == "ps.txt"
-            or base in ("network persistent state", "favicons"))
+            or base in ("network persistent state", "favicons", "origin", "indexeddb.sqlite3")
+            or base.endswith(".localstorage"))

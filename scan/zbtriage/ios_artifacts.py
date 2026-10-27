@@ -122,6 +122,48 @@ def _ia_walk(obj):
             yield path, value
 
 
+def _ia_webkit_name_host(name):
+    """'https_www.example.com_0' (scheme, host, port joined by '_') -> host.
+    "" for a local page inside the app (file, asset... schemes); None when the
+    name is not in this layout at all."""
+    scheme, sep, rest = name.partition("_")
+    host, sep2, port = rest.rpartition("_")
+    if not sep or not sep2 or not port.isdigit() or not scheme:
+        return None
+    return host if scheme in ("http", "https") else ""
+
+
+def _ia_webkit_origin_hosts(raw):
+    """Hosts in a WebKit "origin" file: the top page's and the frame's origin,
+    each a scheme string, a host string and a port flag (plus a 16-bit port).
+    A string is a 32-bit length, a byte saying 8-bit (1) or UTF-16 (0), then text."""
+    hosts, pos = [], 0
+
+    def text():
+        nonlocal pos
+        if pos + 5 > len(raw):
+            raise ValueError("truncated web view origin record")
+        length = int.from_bytes(raw[pos:pos + 4], "little")
+        latin = raw[pos + 4]
+        pos += 5
+        size = length if latin else length * 2
+        if length > 2048 or pos + size > len(raw):
+            raise ValueError("unsupported web view origin record")
+        value = raw[pos:pos + size].decode("latin-1" if latin else "utf-16-le")
+        pos += size
+        return value
+
+    while pos < len(raw) and len(hosts) < 4:
+        scheme, host = text(), text()
+        if pos >= len(raw):
+            raise ValueError("truncated web view origin record")
+        has_port = raw[pos]
+        pos += 1 + (2 if has_port else 0)
+        if scheme in ("http", "https") and host:
+            hosts.append(host)
+    return hosts
+
+
 def _ia_artifact_kind(domain, path, kind):
     base = path.rsplit("/", 1)[-1]
     if base.startswith("._"):
@@ -188,6 +230,13 @@ def _ia_artifact_kind(domain, path, kind):
         return "profile-settings"
     if base == "iTunesMetadata.plist":
         return "app-metadata"
+    # Sites that stored data in an app's web view (MVT: WebkitIndexedDB,
+    # WebkitLocalStorage, WebkitSafariViewService). Before iOS 16 the site is
+    # in the file or folder name; later each site folder holds an "origin" file.
+    if "/websitedata/" in "/" + low and (
+            base == "origin" or base.endswith(".localstorage")
+            or (base == "IndexedDB.sqlite3" and "/indexeddb/v1/" in low)):
+        return "webkit-origins"
     if ("webkit" in low or "safari" in low) and base.endswith(".plist") and "resource" in base.lower():
         return "webkit-session"
     if re.fullmatch(r"shutdown\.log(?:\.\d+)?", base, re.I):
@@ -446,6 +495,26 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
                 r.ran(check)
             except (ValueError, OSError, sqlite3.Error) as exc:
                 gap(check, "message metadata unreadable: " + str(exc))
+
+    def webkit_origin(key, check):
+        path = key[1]
+        low = path.lower()
+        base = path.rsplit("/", 1)[-1]
+        if base == "origin":
+            hosts = _ia_webkit_origin_hosts(source.artifact(*key))
+        elif base.lower().endswith(".localstorage"):
+            hosts = [_ia_webkit_name_host(base[:-len(".localstorage")])]
+        else:
+            segment = path[low.index("/indexeddb/v1/") + len("/indexeddb/v1/"):].split("/", 1)[0]
+            hosts = [_ia_webkit_name_host(segment)]
+        if None in hosts:
+            raise ValueError("unsupported web view site record")
+        # Local pages inside the app (file:, app-defined schemes) are not sites.
+        for host in dict.fromkeys(h for h in hosts if h):
+            text_matches(host, key, check, base,
+                         "site that stored data in an app's web view, so its page was loaded there",
+                         EV_CONTACTED)
+        r.checked += 1
 
     def connection_artifact(key, check):
         """Chromium's Network Persistent State (JSON): servers this browser
@@ -824,6 +893,8 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
                 log_artifact(key, kind, check)
             elif kind == "browser-connections":
                 connection_artifact(key, check)
+            elif kind == "webkit-origins":
+                webkit_origin(key, check)
             elif kind in ("analytics", "profiles", "profile-events", "profile-settings", "location-clients",
                           "preferences", "app-metadata", "webkit-session", "id-status-cache"):
                 plist_artifact(key, kind, check)
