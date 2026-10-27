@@ -267,6 +267,9 @@ def load_stix(path: str, source: str = "", confidence: str = "primary",
             continue
         if kind == TYPE_DOMAIN and infer_type(raw.strip().lower().rstrip(".")) == TYPE_IP:
             kind = TYPE_IP          # an address filed under domain-name
+        if kind == TYPE_FILE_NAME and raw.strip().startswith("/"):
+            # Some publishers put a full path in file:name; it is used as a path.
+            kind = TYPE_FILE_PATH
         value, problem = _normalise(kind, raw)
         if problem:
             result.invalid[problem] += 1

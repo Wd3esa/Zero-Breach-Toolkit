@@ -36,6 +36,9 @@ def _ux_roots():
     common = [("unix-shell-history", os.path.join(home, name), "history-file")
               for name in (".bash_history", ".zsh_history")]
     common.append(("unix-shell-history", os.path.join(data, "fish", "fish_history"), "history-file"))
+    # macOS Terminal keeps history per window session instead of one file.
+    common += [("unix-shell-history", os.path.join(home, name), "history-dir")
+               for name in (".zsh_sessions", ".bash_sessions")]
     common += [("unix-shell-profiles", os.path.join(home, name), "shell-file")
                for name in (".profile", ".bash_profile", ".bash_login", ".bashrc", ".zprofile", ".zshrc", ".zshenv", ".zlogin")]
     common += [("unix-shell-profiles", path, "shell-file") for path in (
@@ -251,6 +254,20 @@ def _ux_fields(data, kind):
     return text, [], ""
 
 
+def _ux_case_values(ind):
+    """The publisher's original spellings (Unix names are case-sensitive)."""
+    originals = set()
+    for encoded in ind.contexts:
+        try:
+            context = json.loads(encoded)
+        except (TypeError, ValueError):
+            continue
+        value = context.get("case_sensitive_value") if isinstance(context, dict) else None
+        if isinstance(value, str):
+            originals.add(value)
+    return originals or {ind.value}
+
+
 def _ux_match(result, ctx, path, text, programs, context="startup configuration"):
     for ind in ctx.iocs.search(text.lower()):
         result.add_hit(Hit(ind.value, path,
@@ -274,8 +291,11 @@ def _ux_match(result, ctx, path, text, programs, context="startup configuration"
                 originals.add(value)
         originals = sorted(originals or {ind.value})
         configured_paths = [value for value in originals if value in programs]
+        # A path is a whole word of shell text: it may follow a command
+        # substitution or separator ($(...), backticks, ;, |, &), not only a
+        # space, quote or '='.
         matched_paths = configured_paths or [value for value in originals
-            if re.search(r"(?<![^\s\"'=])" + re.escape(value) + r"(?=$|[\s\"';])", text)]
+            if re.search(r"(?<![^\s\"'=(`;|&])" + re.escape(value) + r"(?=$|[\s\"';)`|&])", text)]
         if not matched_paths:
             continue
         configured = bool(configured_paths)
@@ -286,6 +306,16 @@ def _ux_match(result, ctx, path, text, programs, context="startup configuration"
             tier=ind.tier, confidence=ind.confidence, source=ind.source,
             family=ind.family, kind=ind.type,
             evidence=EV_CONFIGURED if configured else EV_REFERENCED, artifact=path))
+    # A configured program's file name is also its process name.
+    names = {program.rsplit("/", 1)[-1] for program in programs if isinstance(program, str)}
+    for ind in ctx.iocs.of_type("process") if names else ():
+        matched = sorted(names & _ux_case_values(ind))
+        if matched:
+            result.add_hit(Hit(ind.value, path,
+                "Configured program's process name matches a published indicator; activation and execution "
+                "are unverified. Name: " + matched[0],
+                tier=ind.tier, confidence=ind.confidence, source=ind.source,
+                family=ind.family, kind=ind.type, evidence=EV_CONFIGURED, artifact=path))
 
 
 def run(ctx):
@@ -343,7 +373,8 @@ def run(ctx):
                             if count > _UX_COUNT_CAP:
                                 break
                             continue
-                        suffix = {"desktop": ".desktop", "plist": ".plist", "unit": _UX_UNIT_SUFFIXES}.get(kind)
+                        suffix = {"desktop": ".desktop", "plist": ".plist", "unit": _UX_UNIT_SUFFIXES,
+                                  "history-dir": ".history"}.get(kind)
                         if suffix and not entry.name.endswith(suffix):
                             continue
                         # Subdirectories and unit activation links are not followed.
@@ -364,7 +395,7 @@ def run(ctx):
                     continue
                 seen.add(path)
                 try:
-                    recent = kind in ("history-file", "log-file")
+                    recent = kind in ("history-file", "history-dir", "log-file")
                     if recent:
                         data, truncated = _ux_read_data(path, True)
                         if truncated:
@@ -374,8 +405,9 @@ def run(ctx):
                     total += len(data)
                     if total > _UX_TOTAL_CAP:
                         raise OSError("total configuration read limit reached")
-                    text, programs, limitation = _ux_fields(data, kind)
-                    context = ("saved shell history" if kind == "history-file" else "saved text log" if kind == "log-file"
+                    text, programs, limitation = _ux_fields(data, "history-file" if kind == "history-dir" else kind)
+                    context = ("saved shell history" if kind in ("history-file", "history-dir")
+                               else "saved text log" if kind == "log-file"
                                else "shell startup configuration" if kind.startswith("shell-") else "startup configuration")
                     _ux_match(result, ctx, path, text, programs, context)
                     result.checked += 1

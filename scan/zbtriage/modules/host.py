@@ -45,6 +45,7 @@ import json
 import os
 from ..localpaths import path_problem
 import platform
+import sys
 import re
 import subprocess
 
@@ -819,9 +820,18 @@ def _check_dns_log(r: ModuleResult, ctx) -> None:
 
 # --- 4. hosts file ----------------------------------------------------------
 
+def _hosts_path():
+    """The hosts file on this platform. macOS's /etc is a link to /private/etc,
+    and links are never followed, so the real location is used there."""
+    if sys.platform == "win32":
+        return os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "drivers", "etc", "hosts")
+    if sys.platform == "darwin":
+        return "/private/etc/hosts"
+    return "/etc/hosts"
+
+
 def _check_hosts(r: ModuleResult, ctx) -> None:
-    root = os.environ.get("SystemRoot", r"C:\Windows")
-    path = os.path.join(root, "System32", "drivers", "etc", "hosts")
+    path = _hosts_path()
     ctx.emit("[host] reading {}".format(path))
     problem = path_problem(path)
     if problem:
@@ -987,6 +997,17 @@ def run(ctx) -> ModuleResult:
     ctx.partial = r
 
     system = platform.system()
+    if system in ("Darwin", "Linux"):
+        # The hosts file is the one check here that exists on every platform;
+        # the others (COM registrations, the Windows DNS cache and its event log,
+        # Windows known paths) do not exist on macOS or Linux, so they are not
+        # gaps there.
+        try:
+            _check_hosts(r, ctx)
+        except Exception as exc:
+            r.skipped += 1
+            r.could_not_run("hosts-file", "{}: {}".format(type(exc).__name__, exc))
+        return r
     if system != "Windows" or winreg is None:
         # Never a fake CLEAN on a platform where nothing was observed.
         reason = "not supported on {}".format(system or "unknown platform")

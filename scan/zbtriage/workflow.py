@@ -85,6 +85,24 @@ def workflow_output_guard(args, path, document=None):
         sources.extend(root for _, root, _ in _ux_roots())
         from .modules.browser import _browser_safari_roots
         sources.extend(root for _, root in _browser_safari_roots())
+        # Desktop apps (Slack, Signal...) keep browser records the scan reads
+        # inside the platform's app data and app cache folders. Every app found
+        # by its contents lies within them, so no existing file there may be
+        # replaced, whether or not discovery recognises the app.
+        from .modules.browser import _app_bases, _app_cache_bases
+        if os.path.lexists(output):
+            output_c = _wf_canonical(output)
+            for base in _app_bases() + _app_cache_bases():
+                if not base or path_problem(base) or not os.path.isdir(base):
+                    continue
+                base_c = _wf_canonical(base)
+                try:
+                    inside = os.path.commonpath((base_c, output_c)) == base_c
+                except ValueError:
+                    inside = False
+                if inside:
+                    raise ValueError("an output cannot replace an existing file in the applications' data "
+                                     "folder, where desktop apps keep records this scan reads; choose a new filename")
     for raw in list(getattr(args, "target", ()) or ()):
         if os.path.basename(raw).lower() in _TARGET_DB_FILES and os.path.isfile(raw):
             sources.append(os.path.dirname(os.path.abspath(raw)))

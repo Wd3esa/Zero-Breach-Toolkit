@@ -114,7 +114,7 @@ def test_a_hosts_file_block_with_an_uncommon_loopback_is_not_a_finding(tmp_path,
     etc.mkdir(parents=True)
     (etc / "hosts").write_text("127.0.0.2 blocked.invalid\n198.51.100.7 other.invalid\n",
                                encoding="utf-8")
-    monkeypatch.setenv("SystemRoot", str(tmp_path))
+    monkeypatch.setattr(host, "_hosts_path", lambda: str(etc / "hosts"))
     ctx = context()
     ctx.iocs = _iocs("blocked.invalid", "other.invalid")
     r = ModuleResult("host")

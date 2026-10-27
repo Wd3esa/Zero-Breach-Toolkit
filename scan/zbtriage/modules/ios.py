@@ -21,7 +21,7 @@ from ..result import Hit, ModuleResult, EV_RECEIVED, EV_REFERENCED, EV_CONTACTED
 from ..iocs import TYPE_PROCESS, TYPE_FILE_NAME, TYPE_APP_ID
 from ..ios_sources import IosEvidenceSource, _is_plist
 from ..ios_messages import ios_message_text
-from ..ios_artifacts import ios_additional_artifacts, ios_history_specs, ios_exact_identity
+from ..ios_artifacts import ios_additional_artifacts, ios_history_specs, ios_exact_identity, ios_identity_values
 
 NAME = "ios"
 _IOS_LIMIT = 256 * 1024 * 1024
@@ -268,7 +268,9 @@ def run(ctx) -> ModuleResult:
     try:
         source = IosEvidenceSource(folder, getattr(ctx, "ios_input", "") or "backup",
                                    ctx.backup_password, gap, ctx.emit, _ios_read,
-                                   _ios_query, _ios_tables, _ios_unarchive, inventory_limit=_IOS_ROWS)
+                                   _ios_query, _ios_tables, _ios_unarchive, inventory_limit=_IOS_ROWS,
+                                   keep_names=frozenset(v.lower() for ind in ctx.iocs.of_type(TYPE_FILE_NAME)
+                                                        for v in ios_identity_values(ind)))
         source.start()
         r.ran("ios:manifest" if source.kind == "backup" else "ios:input")
         r.submetrics["ios_inventory_files"] = len(source.entries)
@@ -306,7 +308,11 @@ def run(ctx) -> ModuleResult:
                 _ios_tables(con, tables)
                 cols = _ios_columns(con, table)
                 if check == "ios:messages":
-                    encoded = "CASE WHEN length(attributedBody)<=1048576 THEN attributedBody ELSE x'00' END" if "attributedbody" in cols else "NULL"
+                    # x'' marks a row that stores neither text nor an encoded body
+                    # (group renames, member changes and other system events):
+                    # there is nothing to search, so it is not a gap.
+                    encoded = ("CASE WHEN attributedBody IS NULL THEN x'' WHEN length(attributedBody)<=1048576 "
+                               "THEN attributedBody ELSE x'00' END") if "attributedbody" in cols else "NULL"
                     query = "SELECT text,date,is_from_me," + encoded + " FROM message"
                 elif check == "ios:processes":
                     extra = [name if name.lower() in cols else "NULL" for name in
@@ -359,6 +365,8 @@ def run(ctx) -> ModuleResult:
                             continue
                         text = row[0] or ""
                         if check == "ios:messages" and not text:
+                            if row[3] == b"":
+                                continue
                             try:
                                 text = ios_message_text(row[3])
                             except (ValueError, UnicodeError, plistlib.InvalidFileException, RecursionError):

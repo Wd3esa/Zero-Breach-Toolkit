@@ -272,7 +272,7 @@ class TestAndroidHardening(unittest.TestCase):
         self.assertFalse(any(c.ran for c in r.checks))
 
     def test_valid_sms_hit_survives_damaged_later_member(self):
-        self.backup([zlib.compress(json.dumps([{"body": "https://review.invalid"}]).encode()), b"damaged"])
+        self.backup([zlib.compress(json.dumps([{"body": "https://review.invalid", "type": "1"}]).encode()), b"damaged"])
         r = ModuleResult("android")
         android._an_messages(r, self.ctx, str(self.folder))
         self.assertEqual([h.indicator for h in r.hits], ["review.invalid"])

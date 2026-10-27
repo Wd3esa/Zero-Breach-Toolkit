@@ -307,8 +307,14 @@ def test_plist_families_and_metadata(tmp_path, reader):
     root = tmp_path / "backup"
     documents = [
         ("Library/Preferences/com.apple.osanalytics.addaily.plist", {"netUsageBaseline": {PROCESS: [datetime.datetime(2026, 1, 1), 123]}}),
-        ("Library/ConfigurationProfiles/Profile.plist", {"PayloadUUID": PROFILE}),
-        ("Library/ConfigurationProfiles/ProfileEvents.plist", {"PayloadUUID": PROFILE}),
+        # Real layouts: installed profiles are profile-<hash>.stub; install
+        # history is MCProfileEvents.plist keyed by profile identifier.
+        ("Library/ConfigurationProfiles/profile-0123abcd.stub", {"PayloadUUID": PROFILE}),
+        ("Library/ConfigurationProfiles/MCProfileEvents.plist",
+         {"ProfileEvents": [{PROFILE: {"operation": "install", "process": "/usr/libexec/mobileconfig",
+                                      "timestamp": datetime.datetime(2026, 1, 2, 3, 4, 5)}}]}),
+        # A device-settings file with no profile in it is searched, not a gap.
+        ("Library/ConfigurationProfiles/MCSettingsEvents.plist", {"SystemSettings": {}}),
         ("Library/Caches/locationd/clients.plist", {APP: {"LocationTimeStopped": 700000000}}),
         ("iTunesMetadata.plist", {"softwareVersionBundleId": APP}),
         ("Library/Preferences/.GlobalPreferences.plist", {"LDMGlobalEnabled": True}),
@@ -319,7 +325,8 @@ def test_plist_families_and_metadata(tmp_path, reader):
     assert any(h.indicator == PROCESS and h.observed.startswith("2026-") for h in result.hits)
     assert {(h.indicator, h.evidence) for h in result.hits} >= {(PROFILE, "configured"), (PROFILE, "device-log"), (APP, "device-log"), (DOMAIN, "referenced")}
     assert any("Lockdown Mode as enabled" in n for n in result.notes)
-    assert not any(not c.ran and c.name in ("ios:analytics", "ios:profiles", "ios:location-clients") for c in result.checks)
+    assert not any(not c.ran and c.name in ("ios:analytics", "ios:profiles", "ios:profile-events", "ios:profile-settings",
+                                            "ios:location-clients") for c in result.checks)
 
 
 def test_message_metadata_and_malformed_cache_neighbours(tmp_path, reader):
@@ -441,7 +448,7 @@ def test_malformed_xml_metadata_does_not_hide_readable_artifacts(tmp_path, reade
     malformed = b'<?xml version="1.0"?><plist><dict><key>unfinished</key>'
     root = tmp_path / "backup"
     backup(root, [("HomeDomain", "Library/SMS/sms.db", raw),
-                  ("HomeDomain", "Library/ConfigurationProfiles/first.plist", malformed),
+                  ("HomeDomain", "Library/ConfigurationProfiles/profile-first.stub", malformed),
                   ("HomeDomain", "iTunesMetadata.plist", plistlib.dumps({"softwareVersionBundleId": APP}))])
     (root / "Info.plist").write_bytes(malformed)
     result = reader(ctx(root))

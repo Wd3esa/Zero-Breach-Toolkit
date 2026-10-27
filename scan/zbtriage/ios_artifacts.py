@@ -13,15 +13,26 @@ import sqlite3
 import time
 
 from .ios_sources import _is_plist
-from .result import Lead, EV_REFERENCED, EV_RECEIVED, EV_DEVICE_LOG, EV_CONFIGURED
+from .result import Lead, EV_REFERENCED, EV_RECEIVED, EV_DEVICE_LOG, EV_CONFIGURED, EV_ON_DEVICE, EV_CONTACTED
 
-_IA_ARTIFACT_LIMIT = 256
+_IA_ARTIFACT_LIMIT = 2048
+# When a cap is reached, what was already read should be what matters most:
+# per-app caches and crash reports, which a phone has hundreds of, come last.
+_IA_KIND_ORDER = {"url-cache": 3, "crashes": 2, "app-metadata": 1, "webkit-statistics": 1}
+# Per-report caps; reaching one is always a reported gap, never a silent cut.
+_IA_RECORD_LIMIT = 5000
+_IA_LINE_LIMIT = 200000
 
 
 def ios_exact_identity(indicator, value):
     """Respect publisher case for Unix names, even after feed normalization."""
     if not isinstance(value, str):
         return False
+    return value in ios_identity_values(indicator)
+
+
+def ios_identity_values(indicator):
+    """The publisher's original spellings of an identity (case preserved)."""
     originals = []
     for context in indicator.contexts:
         try:
@@ -31,7 +42,7 @@ def ios_exact_identity(indicator, value):
                 originals.append(original)
         except (ValueError, TypeError):
             continue
-    return value in (originals or [indicator.value])
+    return originals or [indicator.value]
 
 
 def ios_history_specs(source, base_specs, gap):
@@ -58,7 +69,8 @@ def ios_history_specs(source, base_specs, gap):
                 match = base_specs[0]
             elif re.fullmatch(r"var/mobile/Library/Safari/(?:Profiles/[^/]+/)?History\.db", clean):
                 match = base_specs[1]
-            elif clean in ("var/wireless/Library/Databases/DataUsage.sqlite", "var/networkd/netusage.sqlite"):
+            elif clean in ("var/wireless/Library/Databases/DataUsage.sqlite", "var/networkd/netusage.sqlite",
+                           "var/networkd/db/netusage.sqlite"):
                 match = base_specs[2]
             elif re.fullmatch(r"var/mobile/Containers/Data/Application/[^/]+/Library/Application Support/Google/Chrome/(?:Default|Profile \d+)/History", clean):
                 match = base_specs[3]
@@ -112,6 +124,8 @@ def _ia_walk(obj):
 
 def _ia_artifact_kind(domain, path, kind):
     base = path.rsplit("/", 1)[-1]
+    if base.startswith("._"):
+        return ""  # macOS AppleDouble metadata added when an archive is re-packed on a Mac
     low = path.lower()
     # Backup domains constrain app-owned formats. Direct extractions supply
     # physical paths instead; their interpretation still requires a schema.
@@ -119,7 +133,8 @@ def _ia_artifact_kind(domain, path, kind):
                                             "SysSharedContainerDomain-systemgroup.com.apple.configurationprofiles")
     if mobile and base == "sms.db":
         return "messages-extra"
-    if (kind != "backup" or "safari" in domain.lower() or domain == "HomeDomain") and base == "BrowserState.db":
+    if (kind != "backup" or "safari" in domain.lower() or domain == "HomeDomain") and base in (
+            "BrowserState.db", "SafariTabs.db", "CloudTabs.db"):
         return "browser-state"
     if (kind != "backup" or "safari" in domain.lower() or domain == "HomeDomain") and base == "Bookmarks.db":
         return "safari-bookmarks"
@@ -127,6 +142,12 @@ def _ia_artifact_kind(domain, path, kind):
         return "webkit-statistics"
     if base == "Cache.db":
         return "url-cache"
+    # Chromium-based iPhone browsers (Edge, Chrome, Opera...) keep the servers
+    # they connected to; Brave keeps a record per site visited.
+    if base == "Network Persistent State":
+        return "browser-connections"
+    if base == "Brave.sqlite" and (kind != "backup" or "brave" in domain.lower()):
+        return "brave-sites"
     if base == "ChatStorage.sqlite" and (kind != "backup" or "whatsapp" in domain.lower()):
         return "whatsapp"
     if mobile and base == "TCC.db":
@@ -145,16 +166,32 @@ def _ia_artifact_kind(domain, path, kind):
         return "location-clients"
     if mobile and base == ".GlobalPreferences.plist":
         return "preferences"
-    if "configurationprofiles" in low and base.endswith((".plist", ".mobileconfig")):
-        return "profile-events" if "event" in base.lower() else "profiles"
+    if "configurationprofiles" in low and base.endswith((".plist", ".mobileconfig", ".stub")):
+        # Installed profiles are stored as profile-<hash>.stub; install and
+        # removal history is MCProfileEvents.plist. The folder's other plists
+        # (ProfileTruth, MCSettingsEvents, UserSettings...) are device settings.
+        if base == "MCProfileEvents.plist":
+            return "profile-events"
+        if base.startswith("profile-") or base.endswith((".mobileconfig", ".stub")):
+            return "profiles"
+        return "profile-settings"
     if base == "iTunesMetadata.plist":
         return "app-metadata"
     if ("webkit" in low or "safari" in low) and base.endswith(".plist") and "resource" in base.lower():
         return "webkit-session"
     if re.fullmatch(r"shutdown\.log(?:\.\d+)?", base, re.I):
         return "shutdown"
+    if kind == "sysdiagnose" and base == "ps.txt":
+        return "process-list"
+    if re.fullmatch(r"mobile_installation\.log(?:\.\d+)?", base):
+        return "installations"
     if base.endswith((".ips", ".crash")):
-        return "crashes"
+        # Apps keep their own files with these names in their containers
+        # (one photo-vault app stores "invalidWriteDetection.crash"); only
+        # system diagnostic locations hold Apple crash reports.
+        app_owned = (domain.startswith("AppDomain") or "containers/data/application/" in low
+                     or "containers/shared/appgroup/" in low)
+        return "" if app_owned else "crashes"
     return ""
 
 
@@ -212,9 +249,19 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
                 if matches:
                     emit(ind, key, check, record_id, detail, grade, observed, raw_time)
 
-    def sql_rows(key, check, table, required, optional=()):
+    def sql_rows(key, check, table, required, optional=(), alternatives=()):
         con = source.open_database(*key, check)
         try:
+            # Apple renames tables and columns between iOS releases. Use the
+            # first known layout that is fully present; never guess columns.
+            for candidate in ((table, required, optional),) + tuple(alternatives):
+                with query(con, "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                           (candidate[0],)) as cur:
+                    if cur.fetchone() is None:
+                        continue
+                if {x.lower() for x in candidate[1]} <= columns(con, candidate[0]):
+                    table, required, optional = candidate
+                    break
             tables(con, (table,))
             cols = columns(con, table)
             if not {x.lower() for x in required} <= cols:
@@ -234,18 +281,40 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
     def sql_artifact(key, kind, check):
         layouts = {
             "safari-bookmarks": ("bookmarks", ("url",), ()),
-            "browser-state": ("tabs", ("url",), ("title",)),
-            "webkit-statistics": ("observed_domains", ("registrableDomain",), ("lastSeen",)),
+            # BrowserState.db before iOS 15; then SafariTabs.db (tabs are rows of its
+            # bookmarks table) and CloudTabs.db (tabs open on the owner's other devices).
+            "browser-state": ("tabs", ("url",), ("title",),
+                              (("bookmarks", ("url",), ("title",)), ("cloud_tabs", ("url",), ("title",)))),
+            "webkit-statistics": ("ObservedDomains", ("registrableDomain",), ("lastSeen",),
+                                  (("observed_domains", ("registrableDomain",), ("lastSeen",)),)),
             "url-cache": ("cfurl_cache_response", ("request_key",), ("time_stamp",)),
+            "brave-sites": ("ZDOMAIN", ("ZURL",), ("ZVISITS",)),
             "whatsapp": ("ZWAMESSAGE", ("ZTEXT", "ZISFROMME"), ("ZMESSAGEDATE", "ZFROMJID")),
             "permissions": ("access", ("client", "service"), ("auth_value", "allowed", "last_modified")),
             "calls": ("ZCALLRECORD", ("ZADDRESS",), ("ZDATE", "ZORIGINATED")),
-            "calendar": ("CalendarItem", ("title",), ("notes", "url", "start_date")),
+            "calendar": ("CalendarItem", ("summary",), ("description", "url", "start_date"),
+                         (("CalendarItem", ("title",), ("notes", "url", "start_date")),)),
             "interactions": ("ZINTERACTIONS", ("ZBUNDLEID",), ("ZSTARTDATE", "ZENDDATE")),
-            "shortcuts": ("ZSHORTCUT", ("ZNAME", "ZWORKFLOWACTIONS"), ("ZCREATIONDATE",)),
+            # Before iOS 15 actions are a column; later they move to ZSHORTCUTACTIONS.
+            "shortcuts": ("ZSHORTCUT", ("ZNAME", "ZWORKFLOWACTIONS"), ("ZCREATIONDATE",),
+                          (("ZSHORTCUT", ("ZNAME",), ("ZACTIONSDESCRIPTION", "ZCREATIONDATE")),)),
         }
+        if kind == "url-cache":
+            # Several system stores are also called Cache.db (backup state,
+            # telemetry queues). Only a CFNetwork cache is this artifact.
+            con = source.open_database(*key, check)
+            try:
+                with query(con, "SELECT 1 FROM sqlite_master WHERE type='table' AND name LIKE 'cfurl_cache_%'") as cur:
+                    if cur.fetchone() is None:
+                        return
+            finally:
+                con.close()
+        actions_table = False
         for row_id, row in sql_rows(key, check, *layouts[kind]):
             try:
+                if kind == "calls" and isinstance(row[0], bytes):
+                    # CallHistory keeps the number or address as UTF-8 bytes.
+                    row = (row[0].decode("utf-8"),) + tuple(row[1:])
                 if kind == "whatsapp":
                     if type(row[1]) is not int or row[1] not in (0, 1):
                         raise ValueError("message direction is unsupported")
@@ -254,9 +323,13 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
                     typed(row[3], ("email",), key, check, row_id, "message sender identifier", EV_DEVICE_LOG)
                 elif kind == "permissions":
                     granted = row[2] == 2 if row[2] is not None else row[3] == 1
-                    typed(row[0], ("app-id", "file-path"), key, check, row_id,
-                          "TCC client record for " + str(row[1])[:100] + "; consent and execution unverified",
-                          EV_CONFIGURED if granted else EV_REFERENCED)
+                    detail = "TCC client record for " + str(row[1])[:100] + "; consent and execution unverified"
+                    grade = EV_CONFIGURED if granted else EV_REFERENCED
+                    # A client is a bundle ID, an executable path or a bare
+                    # process name; a path's file name is also a process name.
+                    typed(row[0], ("app-id", "file-path", "process"), key, check, row_id, detail, grade)
+                    if isinstance(row[0], str) and row[0].startswith("/"):
+                        typed(row[0].rsplit("/", 1)[-1], ("process",), key, check, row_id, detail, grade)
                     if row[2] is None and row[3] is None:
                         gap(check, "permission decision column unavailable; records remain references")
                 elif kind == "interactions":
@@ -264,13 +337,13 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
                           "application identifier in interaction records", EV_DEVICE_LOG, apple_time(row[1]), row[1])
                 elif kind == "shortcuts":
                     text_matches(row[0], key, check, row_id, "saved Shortcut name; execution unverified")
-                    if not isinstance(row[1], bytes):
-                        raise ValueError("unsupported Shortcut actions encoding")
-                    actions = _is_plist(row[1])
-                    for field, value in _ia_walk(actions):
-                        if isinstance(value, str):
-                            text_matches(value, key, check, str(row_id) + "/" + "/".join(field),
-                                         "saved Shortcut action text; activation and execution unverified")
+                    if row[1] is None or isinstance(row[1], str):
+                        # iOS 15+: row[1] is the action description; the actions
+                        # themselves are read from ZSHORTCUTACTIONS below.
+                        actions_table = True
+                        text_matches(row[1], key, check, row_id, "saved Shortcut description; execution unverified")
+                    else:
+                        shortcut_actions(row[1], key, check, row_id)
                 else:
                     for field_index, value in enumerate(row):
                         if field_index == 0 or isinstance(value, (str, bytes)):
@@ -283,6 +356,37 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
             except (ValueError, UnicodeError, plistlib.InvalidFileException, RecursionError) as exc:
                 r.skipped += 1
                 gap(check, str(exc))
+        if kind == "calendar":
+            # Invitees and organisers: an invitation from an unknown address
+            # is one way a link reaches a phone.
+            con = source.open_database(*key, check)
+            try:
+                with query(con, "SELECT 1 FROM sqlite_master WHERE type='table' AND name='Participant'") as cur:
+                    participants = cur.fetchone() is not None
+            finally:
+                con.close()
+            if participants:
+                for row_id, row in sql_rows(key, check, "Participant", ("email",), ()):
+                    # text_matches covers email indicators and domains inside the address.
+                    text_matches(row[0], key, check, "participant " + str(row_id),
+                                 "calendar participant address; the invitation's content is unverified")
+        if actions_table:
+            for row_id, row in sql_rows(key, check, "ZSHORTCUTACTIONS", ("ZDATA",), ("ZSHORTCUT",)):
+                try:
+                    if row[0] is not None:
+                        shortcut_actions(row[0], key, check, "actions " + str(row_id))
+                except (ValueError, UnicodeError, plistlib.InvalidFileException, RecursionError) as exc:
+                    r.skipped += 1
+                    gap(check, str(exc))
+
+    def shortcut_actions(raw, key, check, row_id):
+        if not isinstance(raw, bytes):
+            raise ValueError("unsupported Shortcut actions encoding")
+        actions = _is_plist(raw)
+        for field, value in _ia_walk(actions):
+            if isinstance(value, str):
+                text_matches(value, key, check, str(row_id) + "/" + "/".join(field),
+                             "saved Shortcut action text; activation and execution unverified")
 
     def message_extras(key):
         specs = (("ios:message-handles", "handle", ("id",), ("service",)),
@@ -317,6 +421,30 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
             except (ValueError, OSError, sqlite3.Error) as exc:
                 gap(check, "message metadata unreadable: " + str(exc))
 
+    def connection_artifact(key, check):
+        """Chromium's Network Persistent State (JSON): servers this browser
+        connected to, under net.http_server_properties.servers[].server."""
+        try:
+            doc = json.loads(source.artifact(*key).decode("utf-8"))
+        except (UnicodeError, ValueError) as exc:
+            raise ValueError("unsupported Network Persistent State: " + str(exc)[:80])
+        props = ((doc.get("net") or {}).get("http_server_properties") or {}) if isinstance(doc, dict) else {}
+        servers = props.get("servers") if isinstance(props, dict) else None
+        if not isinstance(servers, list):
+            raise ValueError("unsupported Network Persistent State layout")
+        for n, entry in enumerate(servers[:_IA_RECORD_LIMIT]):
+            server = entry.get("server") if isinstance(entry, dict) else None
+            if not isinstance(server, str):
+                continue
+            host = re.sub(r"^[a-z]+://", "", server.lower()).split("/")[0].rsplit(":", 1)[0].strip("[]")
+            for ind in ctx.iocs.search(host):
+                if host == ind.value or host.endswith("." + ind.value):
+                    emit(ind, key, check, "server " + str(n),
+                         "server this browser connected to (Chromium connection record)", EV_CONTACTED)
+            r.checked += 1
+        if len(servers) > _IA_RECORD_LIMIT:
+            gap(check, "connection record lists more than {:,} servers; the rest were not compared".format(_IA_RECORD_LIMIT))
+
     def plist_artifact(key, kind, check):
         doc = _is_plist(source.artifact(*key))
         if not isinstance(doc, (dict, list)):
@@ -340,28 +468,58 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
         if kind == "location-clients" and isinstance(doc, dict):
             for name, client in doc.items():
                 if not isinstance(client, dict):
+                    if isinstance(client, (int, float, str)):
+                        continue  # file metadata such as MigrationVersionNumber
                     gap(check, "unsupported location client record")
                     continue
-                if "LocationTimeStopped" in client or "Authorized" in client:
+                recognized += 1
+                stopped = client.get("LocationTimeStopped")
+                detail = "identifier in location-service client metadata; execution unverified"
+                # Keys join "<type><identifier>:" segments: i = bundle ID, p = path.
+                for segment in name.split(":"):
+                    if segment[:1] == "i":
+                        typed(segment[1:], ("app-id",), key, check, name, detail, EV_DEVICE_LOG,
+                              apple_time(stopped), stopped or "")
+                    elif segment[:1] == "p":
+                        typed(segment[1:], ("file-path",), key, check, name, detail, EV_DEVICE_LOG,
+                              apple_time(stopped), stopped or "")
+                typed(name, ("app-id",), key, check, name, detail, EV_DEVICE_LOG, apple_time(stopped), stopped or "")
+        if kind == "profile-events" and isinstance(doc, dict) and isinstance(doc.get("ProfileEvents"), list):
+            # [{profile identifier: {"operation": ..., "process": ..., "timestamp": ...}}]
+            for n, event in enumerate(doc["ProfileEvents"]):
+                if not isinstance(event, dict):
+                    gap(check, "unsupported profile event record")
+                    continue
+                for ident, detail in event.items():
+                    if not isinstance(detail, dict) or "operation" not in detail:
+                        gap(check, "unsupported profile event record")
+                        continue
                     recognized += 1
-                    typed(name, ("app-id",), key, check, name,
-                          "identifier in location-service client metadata; execution unverified", EV_DEVICE_LOG,
-                          apple_time(client.get("LocationTimeStopped")), client.get("LocationTimeStopped", ""))
+                    stamp = detail.get("timestamp")
+                    observed = _ia_iso(stamp)
+                    operation = str(detail.get("operation"))[:40]
+                    text_matches(ident, key, check, "ProfileEvents/" + str(n),
+                                 "profile identifier in a recorded profile " + operation + " event",
+                                 EV_DEVICE_LOG, observed, str(stamp or ""))
+                    typed(ident, ("profile-id",), key, check, "ProfileEvents/" + str(n),
+                          "profile identifier in a recorded profile " + operation + " event", EV_DEVICE_LOG,
+                          observed, str(stamp or ""))
         for field, value in _ia_walk(doc):
             name = field[-1] if field else ""
             location = "/".join(field)
             if isinstance(value, str):
                 text_matches(value, key, check, location, "stored " + kind + " text; execution/contact unverified")
-            if kind in ("profiles", "profile-events") and name in ("PayloadUUID", "PayloadIdentifier"):
+            if kind in ("profiles", "profile-events", "profile-settings") and name in ("PayloadUUID", "PayloadIdentifier"):
                 recognized += 1
                 typed(value, ("profile-id",), key, check, location,
                       "profile identifier in supplied configuration records; current activation unverified",
-                      EV_CONFIGURED if kind == "profiles" else EV_DEVICE_LOG)
+                      EV_DEVICE_LOG if kind == "profile-events" else EV_CONFIGURED)
             elif kind == "analytics" and name in ("processName", "procName", "process"):
                 recognized += 1
                 typed(value, ("process",), key, check, location,
                       "process identity in analytics record; executable contents unverified", EV_DEVICE_LOG)
-            elif kind in ("analytics", "app-metadata", "location-clients") and name in ("bundleID", "bundleId", "softwareVersionBundleId"):
+            elif kind in ("analytics", "app-metadata", "location-clients") and name in (
+                    "bundleID", "bundleId", "BundleId", "softwareVersionBundleId"):
                 recognized += 1
                 typed(value, ("app-id",), key, check, location,
                       "application identifier in " + kind + " records", EV_DEVICE_LOG)
@@ -372,41 +530,182 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
             elif kind == "webkit-session" and isinstance(value, str) and name.lower() in ("url", "requesturl", "resourceurl"):
                 recognized += 1
             r.checked += 1
-        if not recognized:
+        # Settings files and the global preferences have no required typed
+        # field: every string in them was searched, and an absent Lockdown
+        # Mode key only means it was never configured.
+        if not recognized and kind not in ("profile-settings", "preferences"):
             gap(check, "unrecognized typed property-list schema; only literal references were searched")
+
+    def process_name(value, key, check, record_id, detail, observed="", raw_time="", truncated_at=0,
+                     grade=EV_DEVICE_LOG):
+        typed(value, ("process",), key, check, record_id, detail, grade, observed, raw_time)
+        # Memory-pressure reports cut names to a fixed width; a name of exactly
+        # that width may be the start of a longer indicator.
+        if truncated_at and isinstance(value, str) and len(value) == truncated_at:
+            for ind in ctx.iocs.of_type("process"):
+                if len(ind.value) > truncated_at and any(v.startswith(value) for v in ios_identity_values(ind)):
+                    emit(ind, key, check, record_id, detail + " (name recorded truncated to "
+                         + str(truncated_at) + " characters)", grade, observed, raw_time)
+
+    def ips_report(text, key, check, binary_body=False):
+        """Apple .ips: one JSON metadata line, then a JSON or text body that
+        depends on bug_type (crash, Jetsam memory event, stackshot, CPU use...)."""
+        decoder = json.JSONDecoder()
+        meta, pos = decoder.raw_decode(text, len(text) - len(text.lstrip()))
+        if not isinstance(meta, dict):
+            raise ValueError("unsupported IPS root")
+        rest = text[pos:].strip()
+        when = meta.get("timestamp", "")
+        bug_type = str(meta.get("bug_type", ""))
+        found = 0
+        detail = "identity recorded in a diagnostic report; a report alone is not an exploit"
+
+        def identities(index, obj):
+            nonlocal found
+            stamp = obj.get("captureTime", obj.get("timestamp", when))
+            for field, types in (("procName", ("process",)), ("procPath", ("file-path",)), ("bundleID", ("app-id",))):
+                if isinstance(obj.get(field), str):
+                    found += 1
+                    typed(obj[field], types, key, check, str(index) + "/" + field, detail,
+                          EV_DEVICE_LOG, _ia_iso(stamp), stamp)
+            r.checked += 1
+
+        # The metadata line is kept even when the body after it is damaged.
+        identities(0, meta)
+        body = None
+        if rest[:1] == "{":
+            body, end = decoder.raw_decode(rest)
+            if rest[end:].strip():
+                raise ValueError("unsupported IPS document sequence")
+            if not isinstance(body, dict):
+                raise ValueError("unsupported IPS root")
+            identities(1, body)
+        if body is not None:
+            processes = body.get("processes")
+            if isinstance(processes, list):        # JetsamEvent (bug_type 298)
+                if len(processes) > _IA_RECORD_LIMIT:
+                    gap(check, "memory-pressure report lists more than {:,} processes; the rest were not "
+                               "compared".format(_IA_RECORD_LIMIT))
+                for n, proc in enumerate(processes[:_IA_RECORD_LIMIT]):
+                    if isinstance(proc, dict) and isinstance(proc.get("name"), str):
+                        found += 1
+                        process_name(proc["name"], key, check, "processes/" + str(n),
+                                     "process running at a recorded memory-pressure event", _ia_iso(when), when, 32)
+            by_pid = body.get("processByPid")
+            if isinstance(by_pid, dict):           # stackshot (bug_type 288)
+                if len(by_pid) > _IA_RECORD_LIMIT:
+                    gap(check, "stackshot lists more than {:,} processes; the rest were not "
+                               "compared".format(_IA_RECORD_LIMIT))
+                for pid, proc in list(by_pid.items())[:_IA_RECORD_LIMIT]:
+                    if isinstance(proc, dict) and isinstance(proc.get("procname"), str):
+                        found += 1
+                        process_name(proc["procname"], key, check, "processByPid/" + str(pid),
+                                     "process present in a recorded stackshot", _ia_iso(when), when)
+        elif rest:
+            # Text bodies (CPU and wakeup reports, older crashes, update logs).
+            lines = rest.splitlines()
+            if len(lines) > _IA_LINE_LIMIT:
+                gap(check, "diagnostic report longer than {:,} lines; the rest was not searched".format(_IA_LINE_LIMIT))
+            for line_no, line in enumerate(lines[:_IA_LINE_LIMIT], 1):
+                text_matches(line, key, check, line_no, "text in a diagnostic report; execution unverified")
+                match = re.fullmatch(r"(?:Process|Command):\s+(.+?)(?:\s+\[\d+\])?\s*", line)
+                path = re.fullmatch(r"Path:\s+(/\S.*?)\s*", line)
+                if match:
+                    found += 1
+                    process_name(match.group(1), key, check, line_no, detail, _ia_iso(when), when)
+                elif path:
+                    found += 1
+                    typed(path.group(1), ("file-path",), key, check, line_no, detail, EV_DEVICE_LOG,
+                          _ia_iso(when), when)
+        if binary_body and bug_type in ("109", "309"):
+            raise ValueError("crash report body is not text and was not read")
+        # Crash reports (109 legacy, 309) must name the process. Other report
+        # kinds - Siri feedback, update logs - legitimately carry no identity.
+        if not found and bug_type in ("109", "309"):
+            raise ValueError("unsupported IPS identity schema")
+
+    def process_list(text, key, check):
+        """sysdiagnose ps.txt: `ps axwww -o ...,command` at capture time."""
+        lines = text.splitlines()
+        header = lines[0].split() if lines else []
+        if not header or header[-1] != "COMMAND" or "PID" not in header:
+            raise ValueError("unsupported process list layout")
+        detail = "process running when the diagnostic report was captured"
+        if len(lines) - 1 > _IA_LINE_LIMIT:
+            gap(check, "process list longer than {:,} lines; the rest was not compared".format(_IA_LINE_LIMIT))
+        for line_no, line in enumerate(lines[1:_IA_LINE_LIMIT + 1], 2):
+            # Columns are right-aligned to varying widths, so split on fields:
+            # everything after the last fixed column is the command line.
+            fields = line.split(None, len(header) - 1)
+            if len(fields) < len(header):
+                continue
+            command = fields[-1].strip()
+            text_matches(command, key, check, line_no, "command line of a running process")
+            # The executable path may itself contain spaces; try each prefix.
+            words = command.split(" ")
+            for n in range(1, min(len(words), 8) + 1):
+                prefix = " ".join(words[:n])
+                if prefix.startswith("/"):
+                    typed(prefix, ("file-path",), key, check, line_no, detail, EV_ON_DEVICE)
+                    process_name(prefix.rsplit("/", 1)[-1], key, check, line_no, detail, grade=EV_ON_DEVICE)
+            if not command.startswith("/"):
+                process_name(words[0], key, check, line_no, detail, grade=EV_ON_DEVICE)
+            r.checked += 1
+
+    def installation_log(text, key, check):
+        """mobile_installation.log: installd records of installs and containers."""
+        developer = set()
+        lines = text.splitlines()
+        if len(lines) > _IA_LINE_LIMIT:
+            gap(check, "installation log longer than {:,} lines; the rest was not searched".format(_IA_LINE_LIMIT))
+        for line_no, line in enumerate(lines[:_IA_LINE_LIMIT], 1):
+            for pattern, what in ((r"Install Successful for \((\w+):([A-Za-z0-9._-]+)\)", "install"),
+                                  (r"Installing <MIInstallableBundle ID=([A-Za-z0-9._-]+);", "install"),
+                                  (r"Made container live for ([A-Za-z0-9._-]+) at (/\S+)", "container")):
+                match = re.search(pattern, line)
+                if not match:
+                    continue
+                if pattern.startswith("Install Successful"):
+                    install_type, bundle = match.group(1), match.group(2)
+                    if install_type == "Developer":
+                        developer.add(bundle)
+                else:
+                    bundle = match.group(1)
+                when = line[:24].strip()
+                typed(bundle, ("app-id",), key, check, line_no,
+                      "application identifier in an installation log " + what + " record", EV_DEVICE_LOG, "", when)
+                if what == "container":
+                    typed(match.group(2), ("file-path",), key, check, line_no,
+                          "container path in an installation log record", EV_DEVICE_LOG, "", when)
+            r.checked += 1
+        for bundle in sorted(developer)[:20]:
+            r.add_lead(Lead(check, key[1], "The app " + bundle + " was installed as a developer build, not from the App Store.",
+                            "Developers install their own apps this way, and some testing and enterprise tools do "
+                            "too. It matters only if nobody who uses this phone installed it."))
 
     def log_artifact(key, kind, check):
         raw = source.artifact(*key)
         if len(raw) > 32 * 1024 * 1024:
             raise ValueError("diagnostic log byte limit reached")
-        text = raw.decode("utf-8", "strict")
         if kind == "crashes" and key[1].endswith(".ips"):
-            # Apple .ips files commonly use a metadata JSON line and a body JSON
-            # document. Parse with raw_decode rather than assuming one object.
-            decoder, pos, objects = json.JSONDecoder(), 0, []
-            matched_schema = False
-            while pos < len(text):
-                while pos < len(text) and text[pos].isspace():
-                    pos += 1
-                if pos == len(text):
-                    break
-                if len(objects) >= 2:
-                    raise ValueError("unsupported IPS document sequence")
-                obj, pos = decoder.raw_decode(text, pos)
-                if not isinstance(obj, dict):
-                    raise ValueError("unsupported IPS root")
-                objects.append(obj)
-                index = len(objects) - 1
-                when = obj.get("captureTime", obj.get("timestamp", ""))
-                for field, types in (("procName", ("process",)), ("procPath", ("file-path",)), ("bundleID", ("app-id",))):
-                    if isinstance(obj.get(field), str):
-                        matched_schema = True
-                        typed(obj[field], types, key, check, str(index) + "/" + field,
-                              "identity recorded in a crash report; a crash alone is not an exploit",
-                              EV_DEVICE_LOG, _ia_iso(when), when)
-                r.checked += 1
-            if not matched_schema:
-                raise ValueError("unsupported IPS identity schema")
+            head, newline, body = raw.partition(b"\n")
+            try:
+                text = raw.decode("utf-8", "strict")
+            except UnicodeDecodeError:
+                # Some report kinds (Wi-Fi link-quality metrics...) follow the
+                # JSON metadata line with a binary payload that names no process.
+                text = None
+            if text is None:
+                ips_report(head.decode("utf-8", "strict"), key, check, binary_body=bool(body.strip()))
+            else:
+                ips_report(text, key, check)
+            return
+        text = raw.decode("utf-8", "strict")
+        if kind == "process-list":
+            process_list(text, key, check)
+            return
+        if kind == "installations":
+            installation_log(text, key, check)
             return
         recognized, heuristic = 0, False
         pending_shutdown_hits = []
@@ -457,10 +756,13 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
             r.add_lead(Lead(check, key[1], "Shutdown records contain a process path under a research-relevant temporary/database directory.",
                            "Legitimate services also use these directories. A shutdown delay or path alone does not establish spyware."))
 
+    ordered = []
     for key in source.entries:
         kind = _ia_artifact_kind(*key, source.kind)
-        if not kind:
-            continue
+        if kind:
+            ordered.append((_IA_KIND_ORDER.get(kind, 0), key, kind))
+    ordered.sort(key=lambda item: item[0])
+    for _rank, key, kind in ordered:
         check = "ios:" + kind
         found.add(kind)
         if processed >= _IA_ARTIFACT_LIMIT or time.monotonic() > deadline:
@@ -471,9 +773,12 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
             if kind == "messages-extra":
                 message_extras(key)
                 continue
-            if kind in ("shutdown", "crashes"):
+            if kind in ("shutdown", "crashes", "process-list", "installations"):
                 log_artifact(key, kind, check)
-            elif kind in ("analytics", "profiles", "profile-events", "location-clients", "preferences", "app-metadata", "webkit-session"):
+            elif kind == "browser-connections":
+                connection_artifact(key, check)
+            elif kind in ("analytics", "profiles", "profile-events", "profile-settings", "location-clients",
+                          "preferences", "app-metadata", "webkit-session"):
                 plist_artifact(key, kind, check)
             else:
                 sql_artifact(key, kind, check)

@@ -81,7 +81,7 @@ READER_SPECS = (
                         "platform-specific candidates up to 120 MiB in selected folders: Windows binary extensions; Unix also extensionless/executable files, libraries and scripts. Full/targeted modes accept all extensions",
                         "files that ran only in memory leave nothing to fingerprint"],
     }),
-    ReaderSpec('host', 'host', 'host', ('win32',), ('desktop',), {
+    ReaderSpec('host', 'host', 'host', ('win32', 'linux', 'darwin'), ('desktop',), {
         "platforms": ["Windows"],
         "reads": "Per-user COM registrations, the DNS resolver cache, retained DNS "
                  "history (if enabled), the hosts file, known malware file paths.",
@@ -232,10 +232,15 @@ READER_SPECS = (
                         "ios:preferences": "recorded Lockdown Mode preference and literal references",
                         "ios:profiles": "profile configuration identifiers",
                         "ios:profile-events": "historical profile identifiers",
+                        "ios:profile-settings": "literal references in device-management settings",
                         "ios:app-metadata": "application metadata identifiers",
                         "ios:webkit-session": "saved WebKit resource references",
                         "ios:shutdown": "shutdown process paths and investigation leads",
-                        "ios:crashes": "supported IPS and legacy crash process identities"},
+                        "ios:crashes": "supported IPS and legacy crash process identities",
+                        "ios:process-list": "processes running when a sysdiagnose was captured",
+                        "ios:browser-connections": "servers Chromium-based iPhone browsers connected to",
+                        "ios:brave-sites": "sites recorded by the Brave browser",
+                        "ios:installations": "app identifiers and container paths in installation logs"},
         "blind_spots": ["Unsupported schemas and encoded message variants, missing artifacts, deleted data and live phone state.", "Encrypted backups require the owner's password and optional cryptography; encrypted Manifest.db WAL cannot be replayed without independent key metadata.", "Only selected sysdiagnose artifacts are parsed; unified logs and binary diagnostics are unsupported."],
     }, helpers=("ios_sources.py", "ios_messages.py", "ios_artifacts.py")),
     ReaderSpec('patterns', 'patternscan', 'patterns', ('all',), ('desktop', 'targeted'), {

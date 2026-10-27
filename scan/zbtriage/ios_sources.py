@@ -24,6 +24,7 @@ from .localpaths import local_temp_dir, open_evidence_db, path_problem
 _IS_FILE_LIMIT = 256 * 1024 * 1024
 _IS_TOTAL_LIMIT = 1024 * 1024 * 1024
 _IS_ENTRIES = 200000
+_IS_WALK_ENTRIES = 5000000
 _IS_ARCHIVE_LIMIT = 4 * 1024 * 1024 * 1024
 _IS_PLIST_LIMIT = 16 * 1024 * 1024
 
@@ -141,7 +142,7 @@ class _IsTarInfo(tarfile.TarInfo):
 class IosEvidenceSource:
     """Owns plaintext lifetime, inventory, snapshots and per-artifact provenance."""
     def __init__(self, folder, kind, password, gap, emit, read, query, tables, unarchive,
-                 inventory_limit=_IS_ENTRIES):
+                 inventory_limit=_IS_ENTRIES, keep_names=frozenset()):
         self.root, self.kind = os.path.abspath(folder), kind
         self.gap, self.emit, self.read_file = gap, emit, read
         self.query, self.tables, self.unarchive = query, tables, unarchive
@@ -153,13 +154,25 @@ class IosEvidenceSource:
         self.info = {}
         self.password = password
         self.inventory_limit = min(inventory_limit, _IS_ENTRIES)
+        # Lower-case file names that loaded file-name indicators name: such
+        # files are inventoried (by name only) even when no reader opens them.
+        self.keep_names = keep_names
 
     def start(self):
         if path_problem(self.root):
             raise ValueError("refused iPhone evidence root")
         self.tmp = tempfile.mkdtemp(prefix="zbt_ios_", dir=local_temp_dir())
         if self.kind == "backup":
-            manifest = _is_plist(self.read_file(os.path.join(self.root, "Manifest.plist"), 4 * 1024 * 1024))
+            try:
+                manifest = _is_plist(self.read_file(os.path.join(self.root, "Manifest.plist"), 4 * 1024 * 1024))
+            except FileNotFoundError:
+                # A partial copy can lack Manifest.plist. A Manifest.db that is
+                # already readable SQLite can only be an unencrypted backup.
+                if self._read(os.path.join(self.root, "Manifest.db"))[:16] != b"SQLite format 3\x00":
+                    raise
+                self.gap("ios:manifest", "Manifest.plist is missing; the backup was read as unencrypted "
+                         "because its file list is readable without a key")
+                manifest = {}
             if not isinstance(manifest, dict):
                 raise ValueError("Manifest.plist is not a dictionary")
             self.encrypted = manifest.get("IsEncrypted") is True
@@ -170,7 +183,7 @@ class IosEvidenceSource:
             self._remember(("", "Manifest.db"), path, raw)
             if self.encrypted:
                 self.emit("[ios] unlocking the local backup manifest")
-                raw = backup_cbc(backup_ios_file_key(self.keys, manifest.get("ManifestKey")), raw)
+                raw = backup_cbc(backup_ios_file_key(self.keys, manifest.get("ManifestKey")), raw, unpad=True)
             wal = b""
             sidecar = path + "-wal"
             if path_problem(sidecar) or os.path.lexists(sidecar):
@@ -234,8 +247,10 @@ class IosEvidenceSource:
             "parser": "ios-evidence/1", "integrity": "hash of bytes read; not device authenticity"}
 
     def _directory(self):
-        pending, count = [(self.root, 0)], 0
-        deadline = time.monotonic() + 30
+        # A full file system has a million or more entries; only files a reader
+        # can open are inventoried, so the walk itself has a larger bound.
+        pending, count, kept = [(self.root, 0)], 0, 0
+        deadline = time.monotonic() + 600
         while pending:
             folder, depth = pending.pop()
             if time.monotonic() > deadline:
@@ -247,7 +262,7 @@ class IosEvidenceSource:
                 with os.scandir(folder) as entries:
                     for entry in entries:
                         count += 1
-                        if count > _IS_ENTRIES:
+                        if count > _IS_WALK_ENTRIES:
                             self.gap("ios:input", "directory discovery entry limit reached")
                             return
                         info = entry.stat(follow_symlinks=False)
@@ -259,6 +274,13 @@ class IosEvidenceSource:
                             else:
                                 pending.append((entry.path, depth + 1))
                         elif stat.S_ISREG(info.st_mode):
+                            if not (_is_archive_candidate(entry.name) or entry.name == "History"
+                                    or entry.name.lower() in self.keep_names):
+                                continue
+                            kept += 1
+                            if kept > _IS_ENTRIES:
+                                self.gap("ios:input", "directory discovery entry limit reached")
+                                return
                             self.entries.append(("", os.path.relpath(entry.path, self.root).replace(os.sep, "/")))
                         else:
                             self.gap("ios:input", "special filesystem entry was not opened")
@@ -297,6 +319,12 @@ class IosEvidenceSource:
                             name = name[2:]
                         try:
                             name = name.rstrip("/")
+                            # Files this reader never opens are not inventoried, so
+                            # their names (battery logs carry ':' timestamps) are
+                            # not refused either; nothing is written under them.
+                            named = name.rsplit("/", 1)[-1].lower() in self.keep_names
+                            if entry.isfile() and not _is_archive_candidate(name) and not named:
+                                continue
                             _is_safe_parts(name)
                             name_key = hashlib.sha256(name.encode("utf-8", "surrogatepass")).digest()
                             if name_key in seen:
@@ -318,6 +346,7 @@ class IosEvidenceSource:
                             if not entry.isfile() or entry.sparse:
                                 raise ValueError("links, sparse and special archive entries are refused")
                             if not _is_archive_candidate(name):
+                                self.entries.append(("", name))  # inventoried by name only
                                 continue
                             if entry.size > _IS_FILE_LIMIT or self.total + entry.size > _IS_TOTAL_LIMIT:
                                 raise ValueError("archive artifact byte limit reached")
@@ -381,10 +410,18 @@ class IosEvidenceSource:
                 if ("ProtectionClass" in record and isinstance(wrapped, bytes) and len(wrapped) >= 4
                         and record["ProtectionClass"] != int.from_bytes(wrapped[:4], "little")):
                     raise ValueError("inconsistent backup protection class")
-                data = backup_cbc(backup_ios_file_key(self.keys, wrapped), data)
-                if size > len(data):
-                    raise ValueError("truncated encrypted artifact")
-                data = data[:size]
+                # Payloads carry PKCS#7 padding. The recorded Size is taken when
+                # the backup lists the file; a live database (DataUsage, call
+                # history) often changes before it is copied, so real backups
+                # record sizes that differ from the stored payload. The padded
+                # payload is what was copied and is authoritative.
+                if not data:
+                    # An empty payload has nothing to decrypt: an empty file, or
+                    # an iCloud Drive file whose content was never on the phone.
+                    if size:
+                        raise ValueError("file content is not in the backup (iCloud-only or not downloaded)")
+                    return data
+                data = backup_cbc(backup_ios_file_key(self.keys, wrapped), data, unpad=True)
             return data
         self.lookup(domain, relative)
         path = os.path.join(self.root, *_is_safe_parts(relative))
@@ -443,6 +480,9 @@ class IosEvidenceSource:
 
 def _is_archive_candidate(name):
     base = name.rsplit("/", 1)[-1].lower()
-    return (base.endswith((".ips", ".crash", ".plist", ".mobileconfig", ".sqlite", ".db", ".storedata", ".sqlitedb",
+    if base.startswith("._"):
+        return False  # macOS AppleDouble metadata, not evidence
+    return (base.endswith((".ips", ".crash", ".plist", ".mobileconfig", ".stub", ".sqlite", ".db", ".storedata", ".sqlitedb",
                            ".db-wal", ".sqlite-wal", ".storedata-wal", ".sqlitedb-wal"))
-            or base.startswith("shutdown.log"))
+            or base.startswith(("shutdown.log", "mobile_installation.log")) or base == "ps.txt"
+            or base == "network persistent state")

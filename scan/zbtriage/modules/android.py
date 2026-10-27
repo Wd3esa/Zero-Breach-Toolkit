@@ -48,7 +48,7 @@ from ..iocs import (TYPE_ANDROID_PROP, TYPE_APP_CERT, TYPE_APP_ID, TYPE_DOMAIN,
                     TYPE_FILE_NAME, TYPE_FILE_PATH, TYPE_PROCESS, TYPE_SHA256, Indicator,
                     IocSet, ioc_exact_identity, ioc_path_mentioned)
 from ..localpaths import path_problem
-from ..result import EV_DEVICE_LOG, EV_ON_DEVICE, EV_RECEIVED, Hit, Lead, ModuleResult
+from ..result import EV_DEVICE_LOG, EV_ON_DEVICE, EV_RECEIVED, EV_REFERENCED, Hit, Lead, ModuleResult
 
 NAME = "android"
 
@@ -375,7 +375,7 @@ def _an_inflate(data, limit):
 def _an_sms_from_backup(path, password=""):
     """(messages, problem). Reads an unencrypted Android backup (.ab) of the
     telephony provider: header lines, then (optionally zlib) a tar holding
-    *_sms_backup files, each zlib-compressed JSON."""
+    *_sms_backup and *_mms_backup files, each zlib-compressed JSON."""
     try:
         data = _an_read(path, _AN_MAX_BACKUP_BYTES)
     except (OSError, ValueError) as exc:
@@ -416,8 +416,9 @@ def _an_sms_from_backup(path, password=""):
                 if index >= _AN_MAX_MEMBERS:
                     problems.append("archive member limit reached")
                     break
-                if not member.isfile() or not member.name.endswith("_sms_backup"):
+                if not member.isfile() or not member.name.endswith(("_sms_backup", "_mms_backup")):
                     continue
+                mms = member.name.endswith("_mms_backup")
                 found += 1
                 try:
                     if member.size > _AN_MAX_SMS_BYTES:
@@ -434,6 +435,13 @@ def _an_sms_from_backup(path, password=""):
                     if not isinstance(rows, list):
                         raise ValueError("SMS data must be a list")
                     for row in rows:
+                        if mms and isinstance(row, dict):
+                            # MMS keeps its text in mms_body and its folder in
+                            # msg_box (1 = inbox, as SMS type 1). A picture-only
+                            # MMS has no text; its attachments are not opened.
+                            if row.get("mms_body") is None:
+                                continue
+                            row = dict(row, body=row.get("mms_body"), type=row.get("msg_box"), _mms=True)
                         if isinstance(row, dict) and isinstance(row.get("body"), str):
                             messages.append(row)
                         else:
@@ -483,8 +491,10 @@ def _an_packages(r, ctx, folder, info):
     iocs = ctx.iocs
     # App files whose fingerprint or signing certificate is missing or malformed
     # are not compared at all; counting them keeps that from reading as checked.
-    fp = {"files": 0, "no_hash": 0, "no_cert": 0, "no_files": 0,
-          "builtin_no_hash": 0, "builtin_no_cert": 0}
+    # A certificate indicator is a SHA-256 or a SHA-1 digest, and an app file
+    # covers only the digests it actually records, so each is counted apart.
+    fp = {"files": 0, "no_hash": 0, "no_cert_sha256": 0, "no_cert_sha1": 0, "no_files": 0,
+          "builtin_no_hash": 0, "builtin_no_cert_sha256": 0, "builtin_no_cert_sha1": 0}
     for pkg in packages:
         if not isinstance(pkg, dict) or not isinstance(pkg.get("name"), str) or not pkg["name"]:
             r.could_not_run("android:packages", "an app record has no valid package name")
@@ -515,7 +525,8 @@ def _an_packages(r, ctx, folder, info):
             fp["files"] += 1
             if not isinstance(f, dict):
                 fp[prefix + "no_hash"] += 1
-                fp[prefix + "no_cert"] += 1
+                fp[prefix + "no_cert_sha256"] += 1
+                fp[prefix + "no_cert_sha1"] += 1
                 continue
             apk = str(f.get("path") or "")
             sha = str(f.get("sha256") or "").lower()
@@ -526,16 +537,14 @@ def _an_packages(r, ctx, folder, info):
                 _an_hit(r, ind, "{} ({})".format(where, apk),
                         "this app's file has the fingerprint of a published sample")
             cert = f.get("certificate") if isinstance(f.get("certificate"), dict) else {}
-            usable_cert = False
             for key, pattern in (("Sha256", _AN_SHA256_RE), ("Sha1", _AN_SHA1_RE)):
                 value = str(cert.get(key) or "").replace(":", "").lower()
-                usable_cert = usable_cert or bool(pattern.fullmatch(value))
+                if not pattern.fullmatch(value):
+                    fp[prefix + "no_cert_" + key.lower()] += 1
                 ind = iocs.lookup_typed(TYPE_APP_CERT, value) if value else None
                 if ind:
                     _an_hit(r, ind, where, "this app is signed with a certificate the "
                             "researchers tie to spyware ({})".format(key.upper()))
-            if not usable_cert:
-                fp[prefix + "no_cert"] += 1
         installer = str(pkg.get("installer") or "")
         if pkg.get("third_party") and installer not in _AN_STORES:
             powers = sorted({_AN_POWERS[op] for op in info["appops"].get(name, ())
@@ -566,10 +575,19 @@ def _an_fingerprint_coverage(r, iocs, fp):
     for user-installed apps is a gap; for built-in apps it is a note."""
     r.submetrics["android_app_files"] = fp["files"]
     without = " and {} user-installed app(s) listed no app file".format(fp["no_files"]) if fp["no_files"] else ""
+    certs = {len(i.value) for i in iocs.of_type(TYPE_APP_CERT)}
+    # Only the digest kinds that are loaded need to be present.
+    for name, size in (("sha256", 64), ("sha1", 40)):
+        if size not in certs:
+            fp["no_cert_" + name] = fp["builtin_no_cert_" + name] = 0
+    fp["no_cert"] = max(fp["no_cert_sha256"], fp["no_cert_sha1"])
+    fp["builtin_no_cert"] = max(fp["builtin_no_cert_sha256"], fp["builtin_no_cert_sha1"])
+    needed = " and ".join(name for name, size in (("SHA-256", 64), ("SHA-1", 40)) if size in certs)
     for kind, check, missing, what, against in (
             (TYPE_SHA256, "android:app-fingerprints", "no_hash", "valid SHA-256 fingerprint",
              "published spyware sample fingerprints"),
-            (TYPE_APP_CERT, "android:app-certificates", "no_cert", "readable signing certificate",
+            (TYPE_APP_CERT, "android:app-certificates", "no_cert",
+             "signing-certificate " + (needed or "fingerprint"),
              "certificates tied to spyware")):
         if not iocs.of_type(kind):
             continue
@@ -616,7 +634,8 @@ def _an_processes(r, ctx, folder):
             if len(r.hits) > before:
                 r.hits[-1].artifact = source
 
-    for filename in ("processes.json", "processes.txt"):
+    # ps.txt is what older AndroidQF releases wrote.
+    for filename in ("processes.json", "processes.txt", "ps.txt"):
         path = os.path.join(folder, filename)
         try:
             if not _an_exists(path):
@@ -668,7 +687,7 @@ def _an_processes(r, ctx, folder):
     if count:
         r.ran("android:processes")
     else:
-        r.could_not_run("android:processes", "no supported process records" if found_input else "process list missing (processes.json or processes.txt)")
+        r.could_not_run("android:processes", "no supported process records" if found_input else "process list missing (processes.json, processes.txt or ps.txt)")
 
 
 def _an_properties(r, ctx, props):
@@ -909,14 +928,25 @@ def _an_messages(r, ctx, folder):
             continue
         when = ""
         try:
-            when = datetime.datetime.fromtimestamp(int(msg.get("date")) / 1000).isoformat(
+            stamp = int(msg.get("date"))
+            # SMS dates are milliseconds; MMS dates are seconds.
+            when = datetime.datetime.fromtimestamp(stamp if stamp < 10 ** 11 else stamp / 1000).isoformat(
                 timespec="seconds")
         except (TypeError, ValueError, OSError, OverflowError):
             pass
+        kind = "MMS" if msg.get("_mms") else "SMS"
+        address = msg.get("address")
+        if not address and msg.get("_mms"):
+            found = re.search(r"'address': '([^']{1,40})'", str(msg.get("mms_addresses") or ""))
+            address = found.group(1) if found else ""
+        # Folder 1 is the inbox. Sent, draft, outbox and failed messages were
+        # written on this phone, so a link in them is a reference, not delivery.
+        received = str(msg.get("type")) == "1"
         for ind in ctx.iocs.search(body.lower()):
-            _an_hit(r, ind, "SMS from {}".format(str(msg.get("address") or "unknown")[:40]),
-                    "a text message contains it: " + body[:200], evidence=EV_RECEIVED,
-                    observed=when)
+            _an_hit(r, ind, "{} {} {}".format(kind, "from" if received else "to/with",
+                                              str(address or "unknown")[:40]),
+                    "a text message contains it: " + body[:200],
+                    evidence=EV_RECEIVED if received else EV_REFERENCED, observed=when)
     r.checked += len(messages)
     r.submetrics["android_sms_messages"] = len(messages)
     if not problem or messages:

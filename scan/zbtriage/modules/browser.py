@@ -36,7 +36,9 @@ import os
 import re
 import shutil
 import sqlite3
+import plistlib
 import stat
+import struct
 import sys
 import tempfile
 import time
@@ -52,6 +54,18 @@ NAME = "browser"
 
 LOCAL = os.environ.get("LOCALAPPDATA", "")
 ROAMING = os.environ.get("APPDATA", "")
+
+
+def _browser_packages(prefix):
+    """Installed Windows app packages whose folder name starts with prefix."""
+    folder = os.path.join(LOCAL, "Packages")
+    try:
+        if not LOCAL or path_problem(folder) or not os.path.isdir(folder):
+            return []
+        with os.scandir(folder) as entries:
+            return sorted(e.name for e in entries if e.name.startswith(prefix) and e.is_dir(follow_symlinks=False))
+    except OSError:
+        return []
 
 
 def _chromium_roots():
@@ -73,7 +87,20 @@ def _chromium_roots():
                                    "User Data")),
             ("chromium", os.path.join(LOCAL, "Chromium", "User Data")),
             ("vivaldi", os.path.join(LOCAL, "Vivaldi", "User Data")),
-        ]
+            ("chrome-beta", os.path.join(LOCAL, "Google", "Chrome Beta", "User Data")),
+            ("chrome-dev", os.path.join(LOCAL, "Google", "Chrome Dev", "User Data")),
+            ("chrome-canary", os.path.join(LOCAL, "Google", "Chrome SxS", "User Data")),
+            ("edge-beta", os.path.join(LOCAL, "Microsoft", "Edge Beta", "User Data")),
+            ("edge-dev", os.path.join(LOCAL, "Microsoft", "Edge Dev", "User Data")),
+            ("edge-canary", os.path.join(LOCAL, "Microsoft", "Edge SxS", "User Data")),
+            ("brave-beta", os.path.join(LOCAL, "BraveSoftware", "Brave-Browser-Beta", "User Data")),
+            ("brave-nightly", os.path.join(LOCAL, "BraveSoftware", "Brave-Browser-Nightly", "User Data")),
+            # Opera keeps the profile itself in Roaming (its cache in Local).
+            ("opera", os.path.join(ROAMING, "Opera Software", "Opera Stable")),
+            ("opera-gx", os.path.join(ROAMING, "Opera Software", "Opera GX Stable")),
+            ("yandex", os.path.join(LOCAL, "Yandex", "YandexBrowser", "User Data")),
+        ] + [("arc", os.path.join(LOCAL, "Packages", name, "LocalCache", "Local", "Arc", "User Data"))
+             for name in _browser_packages("TheBrowserCompany.Arc_")]
     if sys.platform == "darwin":
         asup = os.path.join(home, "Library", "Application Support")
         return [
@@ -82,6 +109,18 @@ def _chromium_roots():
             ("brave", os.path.join(asup, "BraveSoftware", "Brave-Browser")),
             ("chromium", os.path.join(asup, "Chromium")),
             ("vivaldi", os.path.join(asup, "Vivaldi")),
+            ("chrome-beta", os.path.join(asup, "Google", "Chrome Beta")),
+            ("chrome-dev", os.path.join(asup, "Google", "Chrome Dev")),
+            ("chrome-canary", os.path.join(asup, "Google", "Chrome Canary")),
+            ("edge-beta", os.path.join(asup, "Microsoft Edge Beta")),
+            ("edge-dev", os.path.join(asup, "Microsoft Edge Dev")),
+            ("edge-canary", os.path.join(asup, "Microsoft Edge Canary")),
+            ("brave-beta", os.path.join(asup, "BraveSoftware", "Brave-Browser-Beta")),
+            ("brave-nightly", os.path.join(asup, "BraveSoftware", "Brave-Browser-Nightly")),
+            ("opera", os.path.join(asup, "com.operasoftware.Opera")),
+            ("opera-gx", os.path.join(asup, "com.operasoftware.OperaGX")),
+            ("arc", os.path.join(asup, "Arc", "User Data")),
+            ("yandex", os.path.join(asup, "Yandex", "YandexBrowser")),
         ]
     if sys.platform.startswith("linux"):
         cfg = os.environ.get("XDG_CONFIG_HOME", "")
@@ -95,6 +134,16 @@ def _chromium_roots():
             ("edge", os.path.join(cfg, "microsoft-edge")),
             ("vivaldi", os.path.join(cfg, "vivaldi")),
             ("vivaldi-snapshot", os.path.join(cfg, "vivaldi-snapshot")),
+            ("chrome-beta", os.path.join(cfg, "google-chrome-beta")),
+            ("chrome-dev", os.path.join(cfg, "google-chrome-unstable")),
+            ("edge-beta", os.path.join(cfg, "microsoft-edge-beta")),
+            ("edge-dev", os.path.join(cfg, "microsoft-edge-dev")),
+            ("brave-beta", os.path.join(cfg, "BraveSoftware", "Brave-Browser-Beta")),
+            ("brave-nightly", os.path.join(cfg, "BraveSoftware", "Brave-Browser-Nightly")),
+            ("opera", os.path.join(cfg, "opera")),
+            ("opera-beta", os.path.join(cfg, "opera-beta")),
+            ("yandex", os.path.join(cfg, "yandex-browser")),
+            ("edge-flatpak", os.path.join(var, "com.microsoft.Edge", "config", "microsoft-edge")),
             # snap packaging
             ("chromium-snap", os.path.join(snap, "chromium", "common", "chromium")),
             # flatpak packaging
@@ -147,6 +196,11 @@ def _browser_cache_profile(profile):
     elif sys.platform == "darwin":
         config = os.path.join(home, "Library", "Application Support")
         cache = os.path.join(home, "Library", "Caches")
+    elif (sys.platform == "win32" and ROAMING and LOCAL
+          and _browser_below(profile, os.path.join(ROAMING, "Opera Software"))):
+        # Chromium browsers and desktop apps keep their cache inside the
+        # profile; Opera alone keeps the profile in Roaming, its cache in Local.
+        config, cache = ROAMING, LOCAL
     else:
         return profile
     try:
@@ -181,7 +235,12 @@ def _browser_cache_in_scope(path, targets):
 # a caller that sets the roots (a test, the release fixture) has made the scope
 # explicit, so nothing on the real machine is discovered behind its back.
 APP_ROOTS = None
-_APP_MAX_DEPTH = 6
+# App data folders are walked without a depth limit: real profiles sit as deep
+# as six levels below AppData, and any fixed depth silently missed deeper ones.
+# The walk is bounded by folder count and time instead, and running out of
+# either is a reported gap.
+_APP_MAX_FOLDERS = 400000
+_APP_MAX_SECONDS = 120
 _APP_SKIP = {"temp", "node_modules", ".git", "__pycache__", "crashdumps", "inetcache",
              "d3dscache", "cache", "cache_data", "code cache", "gpucache", "logs"}
 _APP_GENERIC = {"microsoft", "google", "programs"}
@@ -315,6 +374,27 @@ def _app_bases():
     return []
 
 
+def _app_cache_bases():
+    """Where those apps keep their separate caches (on Windows they are under
+    LOCAL, which _app_bases already lists)."""
+    home = os.path.expanduser("~")
+    if sys.platform == "darwin":
+        return [os.path.join(home, "Library", "Caches")]
+    if sys.platform.startswith("linux"):
+        cache = os.environ.get("XDG_CACHE_HOME", "")
+        bases = [cache if os.path.isabs(cache) else os.path.join(home, ".cache")]
+        flatpak = os.path.join(home, ".var", "app")
+        try:
+            if not path_problem(flatpak) and os.path.isdir(flatpak):
+                with os.scandir(flatpak) as entries:
+                    bases += sorted(os.path.join(entry.path, "cache") for entry in entries
+                                    if entry.is_dir(follow_symlinks=False))
+        except OSError:
+            pass
+        return bases
+    return []
+
+
 def _app_roots(gaps=None):
     """(label, path) for every Chromium data folder in the platform's app data
     folders that is not one of the browsers above. Found by what a folder
@@ -323,6 +403,7 @@ def _app_roots(gaps=None):
     gaps (when given) as one reason: an unreadable folder may hold an app."""
     known = {os.path.normcase(os.path.abspath(p)) for _l, p in CHROMIUM_ROOTS}
     found, taken, unreadable = [], set(), []
+    folders, deadline, stopped = 0, time.monotonic() + _APP_MAX_SECONDS, None
 
     def onerror(exc):
         if isinstance(exc, PermissionError) and exc.strerror in (WALK_LINK_REFUSED, WALK_SPECIAL_REFUSED):
@@ -340,11 +421,23 @@ def _app_roots(gaps=None):
                 unreadable.append(base)
             continue
         base_depth = os.path.abspath(base).rstrip("\\/").count(os.sep)
+        if stopped:
+            stopped[1].append(base)
+            continue
         for dirpath, dirs, files in walk_local(base, onerror=onerror):
+            folders += 1
+            if folders > _APP_MAX_FOLDERS or time.monotonic() > deadline:
+                stopped = (dirpath, [base])
+                break
             if os.path.normcase(os.path.abspath(dirpath)) in known:
                 dirs[:] = []
                 continue
-            if "Local State" in files and ("Default" in dirs or _looks_like_profile(dirpath)):
+            # Most apps keep a Chromium "Local State" beside their profile; some
+            # (Signal on macOS) keep the profile itself as the app folder, with
+            # its Preferences but no Local State.
+            if (("Local State" in files and ("Default" in dirs or _looks_like_profile(dirpath)))
+                    or ("Preferences" in files and "Local State" not in files and _looks_like_profile(dirpath)
+                        and ("Network Persistent State" in files or "IndexedDB" in dirs))):
                 found.append((_app_label(base, dirpath, taken), dirpath))
                 dirs[:] = []
                 continue
@@ -352,8 +445,11 @@ def _app_roots(gaps=None):
             if depth == 0 and sys.platform == "darwin":
                 dirs[:] = [d for d in dirs if not d.lower().startswith("com.apple.")
                            and d.lower() not in _APP_MAC_SKIP]
-            dirs[:] = [d for d in dirs
-                       if depth < _APP_MAX_DEPTH and d.lower() not in _APP_SKIP]
+            dirs[:] = [d for d in dirs if d.lower() not in _APP_SKIP]
+    if stopped and gaps is not None:
+        gaps.append("desktop app discovery stopped at its {:,}-folder / {}-second limit at {}; "
+                    "the rest of {} was not searched for desktop apps".format(
+                        _APP_MAX_FOLDERS, _APP_MAX_SECONDS, stopped[0], " and ".join(stopped[1])))
     if unreadable and gaps is not None:
         gaps.append("desktop app discovery: {} folder(s) could not be read, so web records "
                     "of a chat or other desktop app stored there were not checked (for "
@@ -368,6 +464,18 @@ def _app_roots(gaps=None):
 FIREFOX_ROOTS = None
 
 
+def _firefox_label(profiles_dir):
+    """Which Firefox-family browser a profiles folder belongs to."""
+    low = profiles_dir.replace("\\", "/").lower()
+    for marker, label in (("librewolf", "librewolf"), ("waterfox", "waterfox"), ("floorp", "floorp"),
+                          ("/zen", "zen"), (".zen", "zen"), ("pale moon", "palemoon"),
+                          ("torbrowser", "tor-browser"), ("tor-browser", "tor-browser"),
+                          ("tor browser", "tor-browser")):
+        if marker in low:
+            return label
+    return "firefox"
+
+
 def _firefox_roots():
     """Firefox (profiles_dir, cache_dir) pairs by platform.
 
@@ -377,12 +485,21 @@ def _firefox_roots():
     """
     home = os.path.expanduser("~")
     if sys.platform == "win32":
+        tor = os.path.join(home, "Desktop", "Tor Browser", "Browser", "TorBrowser", "Data", "Browser")
         return [(os.path.join(ROAMING, "Mozilla", "Firefox", "Profiles"),
-                 os.path.join(LOCAL, "Mozilla", "Firefox", "Profiles"))]
+                 os.path.join(LOCAL, "Mozilla", "Firefox", "Profiles"))] + [
+            (os.path.join(ROAMING, *parts), os.path.join(LOCAL, *parts)) for parts in (
+                ("librewolf", "Profiles"), ("Waterfox", "Profiles"), ("Floorp", "Profiles"),
+                ("zen", "Profiles"), ("Moonchild Productions", "Pale Moon", "Profiles"))] + [(tor, os.path.join(tor, "Caches"))]
     if sys.platform == "darwin":
-        return [(os.path.join(home, "Library", "Application Support", "Firefox",
-                              "Profiles"),
-                 os.path.join(home, "Library", "Caches", "Firefox", "Profiles"))]
+        asup = os.path.join(home, "Library", "Application Support")
+        caches = os.path.join(home, "Library", "Caches")
+        tor = os.path.join(asup, "TorBrowser-Data", "Browser")
+        return [(os.path.join(asup, "Firefox", "Profiles"),
+                 os.path.join(caches, "Firefox", "Profiles"))] + [
+            (os.path.join(asup, *parts), os.path.join(caches, *parts)) for parts in (
+                ("librewolf", "Profiles"), ("Waterfox", "Profiles"), ("Floorp", "Profiles"),
+                ("zen", "Profiles"), ("Pale Moon", "Profiles"))] + [(tor, os.path.join(tor, "Caches"))]
     if sys.platform.startswith("linux"):
         cache = os.environ.get("XDG_CACHE_HOME", "")
         cache = cache if os.path.isabs(cache) else os.path.join(home, ".cache")
@@ -395,6 +512,20 @@ def _firefox_roots():
              os.path.join(home, "snap", "firefox", "common", ".cache", "mozilla",
                           "firefox")),
             # flatpak packaging
+            (os.path.join(home, ".librewolf"), os.path.join(cache, "librewolf")),
+            (os.path.join(home, ".waterfox"), os.path.join(cache, "waterfox")),
+            (os.path.join(home, ".floorp"), os.path.join(cache, "floorp")),
+            (os.path.join(home, ".zen"), os.path.join(cache, "zen")),
+            (os.path.join(home, ".moonchild productions", "pale moon"),
+             os.path.join(cache, "moonchild productions", "pale moon")),
+            (os.path.join(home, ".var", "app", "io.gitlab.librewolf-community", ".librewolf"),
+             os.path.join(home, ".var", "app", "io.gitlab.librewolf-community", ".cache", "librewolf")),
+            (os.path.join(home, "tor-browser", "Browser", "TorBrowser", "Data", "Browser"),
+             os.path.join(home, "tor-browser", "Browser", "TorBrowser", "Data", "Browser", "Caches")),
+            (os.path.join(home, ".local", "share", "torbrowser", "tbb", "x86_64", "tor-browser", "Browser",
+                          "TorBrowser", "Data", "Browser"),
+             os.path.join(home, ".local", "share", "torbrowser", "tbb", "x86_64", "tor-browser", "Browser",
+                          "TorBrowser", "Data", "Browser", "Caches")),
             (os.path.join(home, ".var", "app", "org.mozilla.firefox", ".mozilla",
                           "firefox"),
              os.path.join(home, ".var", "app", "org.mozilla.firefox", ".cache",
@@ -614,6 +745,87 @@ def _is_ff_profile_dir(path):
         except FileNotFoundError:
             continue
     return False
+
+
+def _browser_read_small(path, limit=16 * 1024 * 1024):
+    """A small evidence file's bytes: links are not followed, and a file that
+    changes or grows past the limit while being read is refused."""
+    problem = path_problem(path)
+    if problem:
+        raise OSError(problem)
+    before = os.lstat(path)
+    if not stat.S_ISREG(before.st_mode) or before.st_size > limit:
+        raise ValueError("not a regular file or larger than the read limit")
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    with os.fdopen(os.open(path, flags), "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        if (not stat.S_ISREG(opened.st_mode) or (before.st_dev, before.st_ino) != (opened.st_dev, opened.st_ino)
+                or path_problem(path)):
+            raise ValueError("file changed before reading")
+        raw = stream.read(limit + 1)
+        after = os.fstat(stream.fileno())
+        if (opened.st_size, opened.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+            raise ValueError("file changed while reading")
+    if len(raw) > limit:
+        raise ValueError("read limit reached")
+    return raw
+
+
+_MAC_EPOCH = 978307200  # 2001-01-01 UTC, the reference date of Apple timestamps
+
+
+def _safari_cookie_domains(raw):
+    """[(domain, creation unix time or None)] from a Cookies.binarycookies file:
+    'cook', a big-endian page count and page sizes, then pages of little-endian
+    cookie records whose header holds string offsets and two Apple dates."""
+    if len(raw) < 8 or raw[:4] != b"cook":
+        raise ValueError("not a Safari cookie file")
+    pages = struct.unpack(">I", raw[4:8])[0]
+    if pages > 100000 or 8 + 4 * pages > len(raw):
+        raise ValueError("cookie page table exceeds the file")
+    sizes = struct.unpack(">%dI" % pages, raw[8:8 + 4 * pages])
+    pos, found = 8 + 4 * pages, []
+    for size in sizes:
+        page = raw[pos:pos + size]
+        pos += size
+        if len(page) != size or size < 12 or page[:4] != b"\x00\x00\x01\x00":
+            raise ValueError("damaged cookie page")
+        count = struct.unpack("<I", page[4:8])[0]
+        if 8 + 4 * count > size:
+            raise ValueError("damaged cookie page")
+        for offset in struct.unpack("<%dI" % count, page[8:8 + 4 * count]):
+            if offset + 56 > size:
+                raise ValueError("damaged cookie record")
+            length = struct.unpack("<I", page[offset:offset + 4])[0]
+            cookie = page[offset:offset + length]
+            if length < 56 or len(cookie) != length:
+                raise ValueError("damaged cookie record")
+            start = struct.unpack("<I", cookie[16:20])[0]
+            end = cookie.find(b"\x00", start)
+            if not 56 <= start < length or end < 0:
+                raise ValueError("damaged cookie record")
+            created = struct.unpack("<d", cookie[48:56])[0]
+            when = created + _MAC_EPOCH if 0 < created < 4e9 else None
+            found.append((cookie[start:end].decode("utf-8"), when))
+            if len(found) > 200000:
+                raise ValueError("cookie count limit reached")
+    return found
+
+
+def _safari_plist_strings(doc, limit=200000):
+    """Every string in a property list, with the key it sits under."""
+    pending, seen = [("", doc)], 0
+    while pending:
+        key, value = pending.pop()
+        seen += 1
+        if seen > limit:
+            raise ValueError("property-list size limit reached")
+        if isinstance(value, dict):
+            pending.extend((str(k), v) for k, v in value.items())
+        elif isinstance(value, list):
+            pending.extend((key, v) for v in value)
+        elif isinstance(value, str):
+            yield key, value
 
 
 def _browser_safari_roots():
@@ -1163,6 +1375,150 @@ def run(ctx) -> ModuleResult:
         finally:
             if not _discard_snapshot(os.path.dirname(tmp), con):
                 mark_fail(label, kind, "temporary Safari snapshot cleanup failed")
+
+    def scan_safari_stores(label, root):
+        """Desktop Safari keeps more than History.db: open and iCloud tabs, a URL
+        cache and WebKit's tracking-prevention list in its sandbox, cookies and
+        HSTS records there too, and bookmarks, downloads, Top Sites and closed
+        tabs as property lists beside its history."""
+        current["name"] = "Safari"
+        library = os.path.dirname(root)
+        sandbox = os.path.join(library, "Containers", "com.apple.Safari", "Data", "Library")
+        sql = (
+            ("safari-tabs", ("Safari", "SafariTabs.db"), "SELECT url FROM bookmarks", "open Safari tab or tab group"),
+            ("safari-cloud-tabs", ("Safari", "CloudTabs.db"), "SELECT url FROM cloud_tabs",
+             "tab open on another of the owner's devices (iCloud Tabs)"),
+            ("safari-cache", ("Caches", "com.apple.Safari", "Cache.db"),
+             "SELECT request_key FROM cfurl_cache_response", "Safari URL cache entry"),
+            ("safari-webkit-statistics", ("WebKit", "WebsiteData", "ResourceLoadStatistics", "observations.db"),
+             "SELECT registrableDomain FROM ObservedDomains",
+             "domain recorded by WebKit tracking prevention; seen in passing, not proof of a visit"),
+        )
+        for kind, parts, query, what in sql:
+            # Current Safari keeps these in its sandbox; older releases beside History.db.
+            for path in (os.path.join(sandbox, *parts), os.path.join(library, *parts)):
+                opened = open_db(path, label, kind)
+                if opened is None:
+                    continue
+                con, tmp = opened
+                try:
+                    with contextlib.closing(con.execute(query)) as rows:
+                        for n, (value,) in enumerate(rows):
+                            if n >= 200000:
+                                mark_fail(label, kind, os.path.basename(path) + ": record limit reached; "
+                                          "the remaining records were not searched")
+                                break
+                            if not isinstance(value, str):
+                                continue
+                            if kind == "safari-webkit-statistics":
+                                ind = _host_matches(value, ctx.iocs)
+                                if ind is not None:
+                                    record_hit(path, ind, what, EV_REFERENCED)
+                            else:
+                                for ind, evidence in _browser_url_evidence(value, ctx.iocs, EV_REFERENCED):
+                                    record_hit(path, ind, what + "; a saved reference, not proof of contact", evidence)
+                            r.checked += 1
+                    mark_ok(label, kind)
+                    _count_db()
+                except (sqlite3.Error, ValueError, TypeError) as exc:
+                    mark_fail(label, kind, os.path.basename(path) + " unreadable or unsupported: " + str(exc))
+                finally:
+                    if not _discard_snapshot(os.path.dirname(tmp), con):
+                        mark_fail(label, kind, "temporary Safari snapshot cleanup failed")
+
+        def plist_at(kind, path):
+            try:
+                doc = plistlib.loads(_browser_read_small(path))
+            except FileNotFoundError:
+                return None
+            except (OSError, ValueError, plistlib.InvalidFileException, RecursionError) as exc:
+                mark_fail(label, kind, os.path.basename(path) + " unreadable or unsupported: " + type(exc).__name__)
+                return None
+            if not isinstance(doc, (dict, list)):
+                mark_fail(label, kind, os.path.basename(path) + ": unsupported property-list root")
+                return None
+            return doc
+
+        for kind, name, what in (
+                ("safari-bookmarks", "Bookmarks.plist", "Safari bookmark or Reading List entry"),
+                ("safari-top-sites", "TopSites.plist", "Safari Top Sites entry"),
+                ("safari-closed-tabs", "RecentlyClosedTabs.plist", "recently closed Safari tab"),
+                ("safari-downloads", "Downloads.plist", "Safari download record")):
+            path = os.path.join(root, name)
+            doc = plist_at(kind, path)
+            if doc is None:
+                continue
+            try:
+                received = {}
+                if kind == "safari-downloads" and isinstance(doc, dict):
+                    # A download that received bytes contacted its host; one that
+                    # received none was only attempted.
+                    for entry in doc.get("DownloadHistory", []) or []:
+                        if isinstance(entry, dict) and isinstance(entry.get("DownloadEntryURL"), str):
+                            got = entry.get("DownloadEntryProgressBytesSoFar")
+                            received[entry["DownloadEntryURL"]] = type(got) is int and got > 0
+                for key, value in _safari_plist_strings(doc):
+                    if not value.lower().startswith(("http://", "https://")):
+                        continue
+                    if value in received:
+                        grade = EV_CONTACTED if received[value] else EV_ATTEMPTED
+                        detail = what + "; contact is graded by the bytes received; execution unverified"
+                    else:
+                        grade, detail = EV_REFERENCED, what + "; a saved reference, not proof of a visit"
+                    for ind, evidence in _browser_url_evidence(value, ctx.iocs, grade):
+                        record_hit(path, ind, detail, evidence)
+                    r.checked += 1
+                mark_ok(label, kind)
+            except (ValueError, RecursionError) as exc:
+                mark_fail(label, kind, os.path.basename(path) + ": " + str(exc))
+
+        kind = "safari-hsts"
+        for path in (os.path.join(sandbox, "Caches", "WebKit", "HSTS", "HSTS.plist"),
+                     os.path.join(library, "Cookies", "HSTS.plist")):
+            doc = plist_at(kind, path)
+            if doc is None:
+                continue
+            if not isinstance(doc, dict):
+                mark_fail(label, kind, "HSTS.plist: unsupported layout")
+                continue
+            for session in doc.values():
+                if not isinstance(session, dict):
+                    continue
+                for host, record in session.items():
+                    if not isinstance(record, dict) or record.get("HSTS Host") is not True:
+                        continue
+                    r.checked += 1
+                    ind = _host_matches(str(host), ctx.iocs)
+                    if ind is None:
+                        continue
+                    created = record.get("Create Time")
+                    observed = ""
+                    if type(created) in (int, float) and 0 < created < 4e9:
+                        observed = datetime.datetime.fromtimestamp(created + _MAC_EPOCH).isoformat(timespec="seconds")
+                    # Only a site that answered over HTTPS can set an HSTS record.
+                    record_hit(path, ind, "Safari HSTS record: the site sent its security policy to this browser",
+                               EV_CONTACTED, observed)
+            mark_ok(label, kind)
+
+        kind = "safari-cookies"
+        for path in (os.path.join(sandbox, "Cookies", "Cookies.binarycookies"),
+                     os.path.join(library, "Cookies", "Cookies.binarycookies")):
+            try:
+                cookies = _safari_cookie_domains(_browser_read_small(path, 64 * 1024 * 1024))
+            except FileNotFoundError:
+                continue
+            except (OSError, ValueError, UnicodeError, struct.error) as exc:
+                mark_fail(label, kind, os.path.basename(path) + " unreadable or unsupported: " + str(exc))
+                continue
+            for domain, when in cookies:
+                r.checked += 1
+                ind = _host_matches(domain.lstrip("."), ctx.iocs)
+                if ind is None:
+                    continue
+                observed = datetime.datetime.fromtimestamp(when).isoformat(timespec="seconds") if when else ""
+                # A cookie exists only because the site's response set it.
+                record_hit(path, ind, "Safari cookie: the site set it in this browser", EV_CONTACTED, observed)
+            mark_ok(label, kind)
 
     def scan_history(label, path, flavour):
         """History / moz_places, host-graded.
@@ -1806,8 +2162,10 @@ def run(ctx) -> ModuleResult:
     else:
         app_roots = []
     chromium_roots = list(CHROMIUM_ROOTS)
+    safari_roots = []
     if not ctx.targets and CHROMIUM_ROOTS is _DEFAULT_CHROMIUM_ROOTS:
-        for label, root in _browser_safari_roots():
+        safari_roots = _browser_safari_roots()
+        for label, root in safari_roots:
             chromium_roots.append((label, root))
             profiles, _, gaps = _browser_targeted_roots(os.path.join(root, "Profiles"))
             chromium_roots.extend((label, profile) for profile in profiles)
@@ -1909,11 +2267,12 @@ def run(ctx) -> ModuleResult:
     # the loop, stamping every Firefox cache hit with the last Chrome profile).
     current["name"] = ""
     for profiles_dir, cache_dir in ff_roots:
+        ff_label = _firefox_label(profiles_dir)
         refused = [(p, path_problem(p)) for p in (profiles_dir, cache_dir)]
         if any(reason for _p, reason in refused):
             for p, reason in refused:
                 if reason:
-                    r.could_not_run("firefox:profiles:" + p, reason)
+                    r.could_not_run(ff_label + ":profiles:" + p, reason)
             continue
         prof_is_dir = os.path.isdir(profiles_dir)
         cache_is_dir = os.path.isdir(cache_dir)
@@ -1927,13 +2286,13 @@ def run(ctx) -> ModuleResult:
             try:
                 folders.update(os.listdir(profiles_dir))
             except OSError as exc:
-                r.could_not_run("firefox:profiles",
+                r.could_not_run(ff_label + ":profiles",
                                 _locked_note(profiles_dir, exc))
         if cache_is_dir:
             try:
                 folders.update(os.listdir(cache_dir))
             except OSError as exc:
-                r.could_not_run("firefox:cache-dir", _locked_note(cache_dir, exc))
+                r.could_not_run(ff_label + ":cache-dir", _locked_note(cache_dir, exc))
 
         if ctx.targets:
             folders = {""}
@@ -1944,7 +2303,7 @@ def run(ctx) -> ModuleResult:
             if any(reason for _p, reason in refused):
                 for p, reason in refused:
                     if reason:
-                        r.could_not_run("firefox:profile:" + p, reason)
+                        r.could_not_run(ff_label + ":profile:" + p, reason)
                 continue
             if not os.path.isdir(prof) and not os.path.isdir(cprof):
                 continue
@@ -1957,25 +2316,30 @@ def run(ctx) -> ModuleResult:
                     if not _is_ff_profile_dir(prof):
                         continue
                 except OSError as exc:
-                    r.could_not_run("firefox:profile:" + name, str(exc))
+                    r.could_not_run(ff_label + ":profile:" + name, str(exc))
                     continue
             display = ff_names.get(name, "")
             current["name"] = ("{} ({})".format(display, name) if display
                                else name)
             ctx.emit("[*]   profile: {}".format(current["name"]))
             if os.path.isdir(prof):
-                scan_history("firefox", os.path.join(prof, "places.sqlite"),
+                # Every Firefox-family browser uses Firefox's database formats.
+                scan_history(ff_label, os.path.join(prof, "places.sqlite"),
                              "firefox")
-                scan_cookies("firefox", os.path.join(prof, "cookies.sqlite"),
+                scan_cookies(ff_label, os.path.join(prof, "cookies.sqlite"),
                              "firefox")
-                scan_favicons("firefox", os.path.join(prof, "favicons.sqlite"),
+                scan_favicons(ff_label, os.path.join(prof, "favicons.sqlite"),
                               "firefox")
                 scan_firefox_hsts(
-                    "firefox",
+                    ff_label,
                     os.path.join(prof, "SiteSecurityServiceState.txt"))
-                scan_firefox_hsts("firefox", os.path.join(prof, "SiteSecurityServiceState.bin"))
+                scan_firefox_hsts(ff_label, os.path.join(prof, "SiteSecurityServiceState.bin"))
             if os.path.isdir(cprof):
-                scan_blobs("firefox", cprof, EV_REFERENCED)
+                scan_blobs(ff_label, cprof, EV_REFERENCED)
+
+    # --- Safari's other stores (macOS): sandbox and ~/Library/Safari --------
+    for label, root in safari_roots:
+        scan_safari_stores(label, root)
 
     # Nothing written after this point should inherit a stale profile name.
     current["name"] = ""

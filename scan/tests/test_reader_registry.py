@@ -17,8 +17,10 @@ from reader_fixtures import stub_registered_readers
 
 @pytest.mark.parametrize("platform,required,excluded", [
     ("win32", {"host", "traces", "windows-execution"}, {"unix-host", "android", "ios"}),
-    ("linux", {"unix-host"}, {"host", "traces", "windows-execution"}),
-    ("darwin", {"unix-host"}, {"host", "traces", "windows-execution"}),
+    # The host reader runs everywhere for the hosts file; its Windows-only
+    # checks are not run or reported on macOS and Linux.
+    ("linux", {"unix-host", "host"}, {"traces", "windows-execution"}),
+    ("darwin", {"unix-host", "host"}, {"traces", "windows-execution"}),
 ])
 def test_platform_selection_source_and_bundle(bundle, platform, required, excluded):
     for api in (readers, bundle):

@@ -51,6 +51,16 @@ class TestDeepFindings(unittest.TestCase):
         hits = [(h.indicator, h.evidence) for h in check(d).hits]
         self.assertEqual(hits, [(SPY, EV_ON_DEVICE)])
 
+    def test_older_androidqf_ps_txt_is_read(self):
+        # Older AndroidQF releases wrote the process list as ps.txt.
+        d = collection(spy=False)
+        os.replace(os.path.join(d, "processes.txt"), os.path.join(d, "ps.txt"))
+        with open(os.path.join(d, "ps.txt"), "a") as fh:
+            fh.write("u0_a99 4000 1 1 1 0 0 S {}\n".format(SPY))
+        r = check(d)
+        self.assertEqual([(h.indicator, h.evidence) for h in r.hits], [(SPY, EV_ON_DEVICE)])
+        self.assertFalse([c for c in r.checks if c.name == "android:processes" and not c.ran])
+
     def test_removed_app_still_shows_in_battery_history(self):
         d = collection(spy=False)
         add_dumpsys(d, batterystats="  Daily from 2026-10-01-00-00-00 to 2026-10-02-00-00-00:\n"
@@ -155,7 +165,7 @@ class TestMessages(unittest.TestCase):
 
     def test_link_in_an_sms_is_received(self):
         d = self.folder_with(sms_backup([
-            {"address": "+100", "body": "Your parcel: https://spy-c2.example/t/9", "date": "1760000000000"},
+            {"address": "+100", "type": "1", "body": "Your parcel: https://spy-c2.example/t/9", "date": "1760000000000"},
             {"address": "+200", "body": "see you at 5", "date": "1760000001000"}]))
         r = check(d)
         hits = [(h.indicator, h.evidence) for h in r.hits]
@@ -164,8 +174,30 @@ class TestMessages(unittest.TestCase):
         self.assertTrue(r.hits[0].observed)
 
     def test_uncompressed_backup_also_reads(self):
-        d = self.folder_with(sms_backup([{"body": "https://spy-c2.example/"}], compressed=False))
+        d = self.folder_with(sms_backup([{"body": "https://spy-c2.example/", "type": "1"}], compressed=False))
         self.assertEqual([h.evidence for h in check(d).hits], [EV_RECEIVED])
+
+    def test_a_link_the_owner_sent_is_a_reference(self):
+        # type 2 = sent; the owner wrote it, so it was not delivered to them.
+        d = self.folder_with(sms_backup([{"body": "https://spy-c2.example/", "type": "2", "address": "+3"}]))
+        self.assertEqual([h.evidence for h in check(d).hits], ["referenced"])
+
+    def test_mms_text_is_read(self):
+        inner = zlib.compress(json.dumps([
+            {"date": "1760000000", "msg_box": "1", "mms_body": "click https://spy-c2.example/m",
+             "mms_addresses": "[{'type': 137, 'address': '+12345678', 'charset': 106}]"},
+            {"date": "1760000001", "msg_box": "1", "mms_body": None}]).encode())
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tar:
+            info = tarfile.TarInfo("apps/com.android.providers.telephony/d_f/000001_mms_backup")
+            info.size = len(inner)
+            tar.addfile(info, io.BytesIO(inner))
+        d = self.folder_with(b"ANDROID BACKUP\n5\n1\nnone\n" + zlib.compress(buf.getvalue()))
+        r = check(d)
+        self.assertEqual([(h.indicator, h.evidence) for h in r.hits], [("spy-c2.example", EV_RECEIVED)])
+        self.assertIn("MMS from +12345678", r.hits[0].location)
+        self.assertTrue(r.hits[0].observed.startswith("2025-"))
+        self.assertFalse([c for c in r.checks if c.name == "android:messages" and not c.ran])
 
     def test_encrypted_or_empty_backup_is_a_gap(self):
         for data, words in ((sms_backup([], encrypted=True), "encrypted"), (b"", "empty")):
@@ -201,7 +233,7 @@ class TestDamagedCollections(unittest.TestCase):
 
     def test_cut_short_sms_backup(self):
         d = collection(spy=False)
-        data = sms_backup([{"body": "https://spy-c2.example/"}] * 50)
+        data = sms_backup([{"body": "https://spy-c2.example/", "type": "1"}] * 50)
         with open(os.path.join(d, "backup.ab"), "wb") as fh:
             fh.write(data[: len(data) // 2])
         r = check(d)

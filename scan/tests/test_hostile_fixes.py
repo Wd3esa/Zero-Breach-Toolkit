@@ -180,7 +180,7 @@ def test_an_enormous_hosts_file_is_a_gap_not_read(tmp_path, monkeypatch):
     etc = tmp_path / "System32" / "drivers" / "etc"
     etc.mkdir(parents=True)
     (etc / "hosts").write_text("198.51.100.7 " + BAD + "\n")
-    monkeypatch.setenv("SystemRoot", str(tmp_path))
+    monkeypatch.setattr(host, "_hosts_path", lambda: str(etc / "hosts"))
     monkeypatch.setattr(host.os.path, "getsize", lambda p: 65 * 1024 * 1024)
     r = ModuleResult("host")
     host._check_hosts(r, context())
