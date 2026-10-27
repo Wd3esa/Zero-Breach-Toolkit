@@ -402,6 +402,10 @@ def update(cache: Optional[str] = None, sources: Optional[List[Dict[str, str]]] 
                 "fetched_utc": datetime.datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
                 "checked_utc": checked,
                 "indicators": len(parsed)}
+            # Record each replaced file at once: an interrupted update then
+            # leaves at most the source in progress out of step, and the next
+            # --update re-downloads it.
+            _write_manifest(cache, manifest)
             entry.update(status="updated", indicators=len(parsed))
             emit("[+] {}: {} indicators".format(src["name"], len(parsed)))
         except Exception as exc:          # one bad source must not stop the rest

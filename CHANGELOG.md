@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- An interrupted `--update` leaves at most the source being downloaded out of step; every
+  finished source stays usable, and the next update repairs the rest.
+- The coverage description of the host check now says that on macOS and Linux it reads
+  only the hosts file.
+- Internal tidy-up of the raw browser-store search.
+
 ## 0.1.1 (2026-10-27)
 
 The project is now called Zero Breach Toolkit: the repository is `Zero-Breach-Toolkit` and

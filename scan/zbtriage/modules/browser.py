@@ -1862,7 +1862,7 @@ def run(ctx) -> ModuleResult:
                        "may remain in the system temp directory"
                        .format(os.path.basename(path)))
 
-    def scan_blobs(label, root, evidence):
+    def scan_blobs(label, root):
         """Substring-search binary files (HTTP cache, LevelDB) for the needles.
 
         Raw bytes do not distinguish origin keys from saved page content. Every
@@ -2253,12 +2253,10 @@ def run(ctx) -> ModuleResult:
             scan_cookies(label, os.path.join(prof, "Cookies"), "chromium")
             scan_favicons(label, os.path.join(prof, "Favicons"), "chromium")
             scan_connection_records(label, prof)
-            for sub, evidence in (
-                    (("Cache", "Cache_Data"), EV_REFERENCED),
-                    (("Code Cache", "js"), EV_REFERENCED),
-                    (("Local Storage", "leveldb"), EV_CONTACTED),
-                    (("Session Storage",), EV_CONTACTED),
-                    (("Service Worker", "CacheStorage"), EV_CONTACTED)):
+            # Raw stores: every match is graded referenced (see scan_blobs).
+            for sub in (("Cache", "Cache_Data"), ("Code Cache", "js"),
+                        ("Local Storage", "leveldb"), ("Session Storage",),
+                        ("Service Worker", "CacheStorage")):
                 # A desktop app's raw web cache is most of its data and only 'referenced'
                 # evidence; it is read in the full scan. Cookies, history,
                 # connection records and site storage are always read.
@@ -2272,7 +2270,7 @@ def run(ctx) -> ModuleResult:
                     if cache_profile != prof and _browser_cache_in_scope(cache_profile, ctx.targets):
                         blob_roots.append(cache_profile)
                 for blob_root in blob_roots:
-                    scan_blobs(label, os.path.join(blob_root, *sub), evidence)
+                    scan_blobs(label, os.path.join(blob_root, *sub))
 
     _report_app_caches_skipped(r, app_caches_skipped)
 
@@ -2352,7 +2350,7 @@ def run(ctx) -> ModuleResult:
                     os.path.join(prof, "SiteSecurityServiceState.txt"))
                 scan_firefox_hsts(ff_label, os.path.join(prof, "SiteSecurityServiceState.bin"))
             if os.path.isdir(cprof):
-                scan_blobs(ff_label, cprof, EV_REFERENCED)
+                scan_blobs(ff_label, cprof)
 
     # --- Safari's other stores (macOS): sandbox and ~/Library/Safari --------
     for label, root in safari_roots:

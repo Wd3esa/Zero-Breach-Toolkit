@@ -82,9 +82,10 @@ READER_SPECS = (
                         "files that ran only in memory leave nothing to fingerprint"],
     }),
     ReaderSpec('host', 'host', 'host', ('win32', 'linux', 'darwin'), ('desktop',), {
-        "platforms": ["Windows"],
-        "reads": "Per-user COM registrations, the DNS resolver cache, retained DNS "
-                 "history (if enabled), the hosts file, known malware file paths.",
+        "platforms": ["Windows", "macOS", "Linux"],
+        "reads": "Windows: per-user COM registrations, the DNS resolver cache, retained DNS "
+                 "history (if enabled), the hosts file, known malware file paths. "
+                 "macOS and Linux: the hosts file only.",
         "check_kinds": {
             "com-persistence": "per-user COM registrations (auto-start)",
             "com-signatures": "signature status of registered COM servers",

@@ -79,3 +79,26 @@ def test_update_request_uses_a_generic_user_agent(monkeypatch):
     monkeypatch.setattr(feeds.urllib.request, "build_opener", lambda *a: _Opener())
     feeds._fetch(feeds.SOURCES[0]["url"])
     assert seen["ua"] == "Mozilla/5.0"
+
+
+def test_interrupted_update_keeps_finished_sources_usable(tmp_path):
+    cache = str(tmp_path)
+    a, b = dict(_src(), id="a"), dict(_src(), id="b")
+    feeds.update(cache, [a, b], fetch=lambda u: _body(30))
+
+    def fetch(url, calls=[]):
+        calls.append(url)
+        if len(calls) == 2:
+            raise KeyboardInterrupt
+        return _body(40)
+
+    try:
+        feeds.update(cache, [a, b], fetch=fetch)
+    except KeyboardInterrupt:
+        pass
+    manifest = feeds.read_manifest(cache)
+    assert manifest["a"]["indicators"] == 40 and manifest["b"]["indicators"] == 30
+    for sid in ("a", "b"):
+        entry = manifest[sid]
+        with open(os.path.join(cache, entry["file"]), "rb") as fh:
+            assert feeds._feed_sha256(fh.read()) == entry["sha256"]
