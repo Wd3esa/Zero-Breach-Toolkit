@@ -273,12 +273,17 @@ def _mn_collect(s):
           "\n  published fingerprint, and runs it to copy records from the phone. It needs"
           "\n  the internet for the download, USB debugging on the phone, and the phone"
           "\n  owner's consent. The collected records are private: keep the folder safe."
-          "\n\n  Choose an empty folder on this computer to save the collection in"
-          "\n  (drag it in or type its path). Type 0 to go back.")
-    folder = s.local_path("  > ", want_dir=True)
+          "\n\n  Press Enter to save the collection on your Desktop, or drag in another"
+          "\n  folder (or type its path). Type 0 to go back.")
+    folder = s.local_path("  > ", allow_blank=True, want_dir=True)
     if folder is None:
         return "back"
+    if folder == "":
+        home = os.path.expanduser("~")
+        desktop = os.path.join(home, "Desktop")
+        folder = desktop if os.path.isdir(desktop) else home
     s.args.collect_android = os.path.join(folder, "zero-breach-android-collection")
+    s.say("  The collection will be saved in " + s.args.collect_android)
     return "scan"
 
 

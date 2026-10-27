@@ -23,68 +23,142 @@ Made by archivegenocide. Built on [Zero Breach](https://github.com/interplains/z
 
 ## Step-by-step guide (no technical experience needed)
 
-You do not need a GitHub account. It takes about 20 minutes, most of it waiting.
+You do not need a GitHub account or any technical knowledge. You need a Windows or Mac
+computer and about 20 minutes. Phones are checked by connecting them to the computer.
 
-### On Windows
+**What do you want to check?**
+[This Windows computer](#windows) ·
+[This Mac](#mac) ·
+[An Android phone](#android-phone) ·
+[An iPhone](#iphone)
 
-1. **Install Python** (free). Go to [python.org/downloads](https://www.python.org/downloads/),
-   click the yellow **Download Python** button and open the file. On the first screen,
-   **tick "Add python.exe to PATH"**, then click **Install Now**.
-2. **Download Zero Breach.** On this page, click the green **Code** button near the top, then
-   **Download ZIP**.
-3. **Unzip it.** Open your Downloads folder, right-click `Zero-Breach-Toolkit-main.zip` and
-   choose **Extract All**, then **Extract**.
-4. **Close your web browsers and chat apps** (Chrome, Edge, WhatsApp, Signal…), so their
-   records can be read.
-5. **Start it.** Open the extracted `Zero-Breach-Toolkit-main` folder (if there is another
-   folder with the same name inside, open that too), then the `scan` folder, and double-click
-   **`run-scan.cmd`**. If Windows asks whether to run it, choose **Run** (or **More info**,
-   then **Run anyway**).
-6. **Get the latest spyware lists (recommended).** A menu appears. Type the number next to
-   **Update the indicator lists**, press Enter, then type `y` and press Enter. This is the
-   only step that uses the internet. When it finishes, press Enter to return to the menu.
-7. **Run the check.** Type the number next to **This computer - standard check** (or just
-   press Enter) and wait. It takes about 15 minutes and shows its progress.
-8. **Read the result** (see "What the result means" below). A copy of the report is saved
-   automatically in the `findings` folder inside the toolkit folder.
+### Windows
 
-### On a Mac
+**Set up (only the first time)**
 
-1. **Install Python** (free). Go to [python.org/downloads](https://www.python.org/downloads/),
-   click **Download Python**, open the file and follow the installer.
-2. **Download Zero Breach.** On this page, click the green **Code** button, then
-   **Download ZIP**. Safari unzips it into your Downloads folder as `Zero-Breach-Toolkit-main`
-   (in another browser, double-click the downloaded `.zip` to unzip it).
-3. **Allow Terminal to read protected folders.** Open **System Settings → Privacy & Security →
-   Full Disk Access**, click **+**, choose **Applications → Utilities → Terminal**, and switch
-   it on. Without this, macOS blocks Safari's records and some folders.
-4. **Close your web browsers and chat apps.**
-5. **Open Terminal** (press Cmd+Space, type `Terminal`, press Enter). Copy each line below,
-   paste it into Terminal and press Enter:
+1. Go to [python.org/downloads](https://www.python.org/downloads/) and click the yellow
+   **Download Python** button. Open the downloaded file.
+2. On the first screen of the installer, **tick "Add python.exe to PATH"** at the bottom,
+   then click **Install Now**. Wait until it says "Setup was successful".
+3. On this page, click the green **Code** button near the top, then **Download ZIP**.
+4. Open your **Downloads** folder, right-click **Zero-Breach-Toolkit-main.zip** and choose
+   **Extract All**, then **Extract**.
+
+**Run the check**
+
+5. Close your web browsers and chat apps (Chrome, Edge, WhatsApp, Signal…).
+6. Open the **Zero-Breach-Toolkit-main** folder (if there is another folder with the same name
+   inside, open that one too), then the **scan** folder, and double-click **run-scan.cmd**.
+   If Windows shows a warning, click **Run** (or **More info**, then **Run anyway**).
+7. A menu appears. Type the number next to **Update the indicator lists** and press Enter,
+   then type `y` and press Enter. When it finishes, press Enter.
+8. Press Enter again to start **This computer - standard check**. It takes about 15 minutes.
+9. Read the result at the end (see [What the result means](#what-the-result-means)). A copy
+   is saved in the **findings** folder inside Zero-Breach-Toolkit-main.
+
+### Mac
+
+**Set up (only the first time)**
+
+1. Go to [python.org/downloads](https://www.python.org/downloads/), click **Download Python**,
+   open the downloaded file and follow the installer.
+2. On this page, click the green **Code** button, then **Download ZIP**. It appears in your
+   **Downloads** folder as **Zero-Breach-Toolkit-main** (if it is still a .zip file,
+   double-click it).
+3. Open **System Settings → Privacy & Security → Full Disk Access**, click **+**, choose
+   **Applications → Utilities → Terminal**, and turn it on. Without this, macOS hides
+   Safari's records from the check.
+
+**Run the check**
+
+4. Close your web browsers and chat apps.
+5. Open **Terminal** (press Cmd+Space, type `Terminal`, press Enter). Copy this line, paste it
+   into Terminal and press Enter:
    ```
-   cd ~/Downloads/Zero-Breach-Toolkit-main
-   python3 -X utf8 scan/zero-breach-toolkit.py
+   cd ~/Downloads/Zero-Breach-Toolkit-main && python3 -X utf8 scan/zero-breach-toolkit.py
    ```
-6. **Get the latest spyware lists (recommended).** In the menu, type the number next to
-   **Update the indicator lists**, press Enter, then type `y` and press Enter.
-7. **Run the check.** Type the number next to **This computer - standard check** (or just
-   press Enter) and wait about 15 minutes.
-8. **Read the result**, then keep a copy: in the menu that follows, type `3` (Save the readable
-   report), press Enter, type `report.txt` and press Enter. It is saved in the
-   `Zero-Breach-Toolkit-main` folder. Type `0` to finish.
+6. A menu appears. Type the number next to **Update the indicator lists** and press Enter,
+   then type `y` and press Enter. When it finishes, press Enter.
+7. Press Enter again to start **This computer - standard check**. It takes about 15 minutes.
+8. To keep a copy of the result, type `3` and press Enter, type `report.txt` and press Enter.
+   It is saved in the Zero-Breach-Toolkit-main folder. Type `0` to finish.
 
-On Linux, follow the Mac steps without step 3 (most systems already have Python 3).
+On Linux, follow the Mac steps without step 3.
 
-### Checking a phone
+### Android phone
 
-The phone is checked from a computer. Follow the computer steps above, then:
+First do the **Set up** steps for [Windows](#windows) or [Mac](#mac) above.
 
-- **iPhone:** make a local backup on the computer first. See
-  [Checking local iPhone evidence](#checking-local-iphone-evidence).
-- **Android:** collect the phone's records with AndroidQF first. See
-  [Checking an Android phone](#checking-an-android-phone).
+**On the phone**
 
-In the menu, choose **A phone**, then drag the backup or collection folder into the window.
+1. Open **Settings → About phone** and tap **Build number** seven times, until it says you are
+   a developer. (On Samsung: **Settings → About phone → Software information → Build number**.)
+2. Go back to **Settings**, open **Developer options** (often under **System**) and turn on
+   **USB debugging**.
+3. Connect the phone to the computer with a USB cable that carries data (some cables only
+   charge). Unlock the phone. When it asks **Allow USB debugging?**, tick **Always allow** and
+   tap **Allow**.
+
+**On the computer**
+
+4. Start Zero Breach (Windows: double-click **run-scan.cmd**; Mac: step 5 of the Mac guide).
+5. In the menu, type the number next to **A phone** and press Enter, then type `2` (**Collect
+   from an Android phone connected by USB now**) and press Enter.
+6. Press Enter to save the collection on your Desktop, then type `YES` and press Enter.
+7. The collector asks a few questions. Use the arrow keys and Enter to answer:
+
+   | It asks | Choose |
+   |---|---|
+   | Backup | **Only SMS** |
+   | Download copies of apps | **Only non-system packages** |
+   | Remove copies of apps signed with a trusted certificate | **No** |
+   | Intrusion Logs | **No** |
+   | Hash files | **No** |
+   | Anything else | **No** |
+
+8. If the phone shows **Back up my data**, tap it (leave the password empty). Keep the phone
+   unlocked until the collection finishes.
+9. The check starts by itself and shows the result.
+10. When you are done, turn **USB debugging** off again on the phone.
+
+### iPhone
+
+First do the **Set up** steps for [Windows](#windows) or [Mac](#mac) above.
+
+1. **Make a backup on the computer.** Connect the iPhone with a cable and tap **Trust** on the
+   phone.
+   - Windows: install **Apple Devices** from the Microsoft Store, open it and select the iPhone.
+   - Mac: open **Finder** and select the iPhone in the sidebar.
+2. Choose **Back up all of the data on your iPhone to this computer**, tick **Encrypt local
+   backup**, choose a password you will remember, and click **Back Up Now**. Wait until it
+   finishes.
+3. **Open the backup folder:**
+   - Windows: press **Windows key + R**, paste `%USERPROFILE%\Apple\MobileSync\Backup` and press
+     Enter.
+   - Mac: in Finder, choose **Go → Go to Folder**, paste
+     `~/Library/Application Support/MobileSync/Backup` and press Enter.
+
+   Inside is a folder with a long name of letters and numbers: that is your backup.
+4. Start Zero Breach. In the menu, type the number next to **A phone**, press Enter, type `1`
+   and press Enter.
+5. **Drag the backup folder** (the one with the long name) into the Zero Breach window and press
+   Enter.
+6. When asked whether the backup is password-protected, type `y` and press Enter, then type the
+   backup password (nothing appears while you type) and press Enter.
+
+### If something goes wrong
+
+| What you see | What to do |
+|---|---|
+| `'python' is not recognized` or nothing happens on Windows | Run the Python installer again, choose **Modify**, and make sure **Add Python to environment variables** is ticked. Restart the computer. |
+| `No such file or directory` on a Mac | The folder has a different name. In Terminal type `cd ` (with a space), drag the Zero-Breach-Toolkit-main folder into Terminal, press Enter, then run `python3 -X utf8 scan/zero-breach-toolkit.py`. |
+| `command not found: python3` | Install Python from python.org (step 1), then close and reopen Terminal. |
+| Android: the collector finds no phone | Unlock the phone, use a different cable or USB port, and check **Allow USB debugging** was accepted. Unplug and plug in again. |
+| iPhone: "wrong password" | Use the password chosen when **Encrypt local backup** was first turned on. If it is forgotten, it can be reset on the iPhone (Settings → General → Transfer or Reset iPhone → Reset → Reset All Settings), then make a new backup. |
+| Safari "could not be checked" on a Mac | Give Terminal Full Disk Access (Mac step 3), close Terminal, open it again and run the check again. |
+
+Still stuck? Ask in the [issues](https://github.com/interplains/Zero-Breach-Toolkit/issues)
+(do not post your report there; it contains private details).
 
 ### What the result means
 

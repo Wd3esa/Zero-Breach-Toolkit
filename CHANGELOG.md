@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Guided Android collection: press Enter to save it on the Desktop instead of choosing a folder.
+- README: a simpler step-by-step guide per device (Windows, Mac, Android, iPhone) with a troubleshooting table.
 - Linux: translated user folders (for example `~/Téléchargements` or an Arabic desktop
   folder) are found from `user-dirs.dirs` and fingerprinted; Snap Brave, Opera and Vivaldi
   (data in the current revision folder), Firefox 147's `~/.config/mozilla/firefox` profiles
