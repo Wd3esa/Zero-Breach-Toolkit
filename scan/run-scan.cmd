@@ -11,9 +11,11 @@ cd /d "%~dp0" || goto :nofolder
 if not exist "zero-breach-toolkit.py" goto :nofolder
 
 rem Find Python: the PATH first, then the py launcher.
+rem A Python that actually runs: Windows ships a "python" stand-in that only
+rem opens the Microsoft Store, so finding the name is not enough.
 set "PY="
-where python >nul 2>&1 && set "PY=python"
-if not defined PY where py >nul 2>&1 && set "PY=py"
+python -c "import sys" >nul 2>&1 && set "PY=python"
+if not defined PY py -3 -c "import sys" >nul 2>&1 && set "PY=py -3"
 if not defined PY (
   echo.
   echo  Python was not found on this PC.

@@ -8,7 +8,7 @@
       "id": "identity--294ec63a-c449-5439-83fb-942185697747",
       "created": "2026-10-18T00:00:00.000Z",
       "modified": "2026-10-18T22:33:48.000Z",
-      "name": "adint-scan IOC set",
+      "name": "zbtriage IOC set",
       "identity_class": "system",
       "description": "Curated from public reporting. NOT affiliated with, and NOT endorsed by, The Citizen Lab or Confiant."
     },
@@ -2792,7 +2792,7 @@
       "modified": "2026-10-18T22:33:48.000Z",
       "created_by_ref": "identity--294ec63a-c449-5439-83fb-942185697747",
       "name": "52.174.65.77",
-      "description": "Candiru command-and-control server. A connection to this is the most serious of the indicator classes.",
+      "description": "IP address of Candiru-attributed infrastructure. WEAKER THAN A DOMAIN: these are mostly cloud-hosted addresses from a 2025 report and are very likely reassigned to unrelated tenants by now. Only meaningful if the hit is dated within the reporting period.",
       "indicator_types": [
         "malicious-activity"
       ],
@@ -2800,7 +2800,7 @@
       "pattern_type": "stix",
       "valid_from": "2026-10-18T00:00:00.000Z",
       "labels": [
-        "tier:cc",
+        "tier:candiru-ip",
         "confidence:primary",
         "source:citizenlab-adfection-2026"
       ],

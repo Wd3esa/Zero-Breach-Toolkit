@@ -75,9 +75,10 @@ suggestutterly.com	cc	primary	citizenlab-adfection-2026
 #
 # An IP that matched the same fingerprint, plus the two shared-hosting hostnames the
 # report says pointed at it. The hostnames are specific enough to match safely; the
-# IP is an Azure address, so note that cloud IPs get reassigned to innocent tenants
-# over time - treat an IP-only hit as weaker than a domain hit.
-52.174.65.77	cc	primary	citizenlab-adfection-2026
+# IP is an Azure address, and cloud IPs get reassigned to innocent tenants over time,
+# so it is filed in the weaker `candiru-ip` tier (see the note on Recorded Future's IPs
+# below): an undated hit on it alone is not a finding.
+52.174.65.77	candiru-ip	primary	citizenlab-adfection-2026
 archer.westeurope.cloudapp.azure.com	cc	primary	citizenlab-adfection-2026
 bd-mainserver.herokuapp.com	cc	primary	citizenlab-adfection-2026
 #

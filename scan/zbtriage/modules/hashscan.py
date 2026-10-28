@@ -24,7 +24,12 @@ import stat
 import sys
 
 from ..result import Hit, ModuleResult, EV_ON_DISK
-from ..localpaths import path_problem, walk_local, WALK_LINK_REFUSED, WALK_SPECIAL_REFUSED
+from ..localpaths import (path_problem, walk_local, WALK_LINK_REFUSED, WALK_SPECIAL_REFUSED,
+                          WALK_CLOUD_SKIPPED, SF_DATALESS)
+
+# Windows marks OneDrive online-only files with these attributes; opening one
+# downloads it first (RECALL_ON_DATA_ACCESS, RECALL_ON_OPEN, OFFLINE).
+_CLOUD_ONLY_ATTRIBUTES = 0x00400000 | 0x00040000 | 0x00001000
 
 NAME = "hash"
 
@@ -160,6 +165,9 @@ def _hash_one(full):
         info = os.stat(full, follow_symlinks=False)
         if not stat.S_ISREG(info.st_mode):
             return full, None, 0, "special"
+        if (getattr(info, "st_flags", 0) & SF_DATALESS
+                or getattr(info, "st_file_attributes", 0) & _CLOUD_ONLY_ATTRIBUTES):
+            return full, None, 0, "cloud"
         if info.st_size > MAX_BYTES:
             return full, None, 0, "large"
         digest, size = _sha256(full)
@@ -181,6 +189,8 @@ def _hs_reasons(reasons):
         parts.append("{} over {} MB".format(reasons["large"], MAX_BYTES // (1024 * 1024)))
     if reasons["unreadable"]:
         parts.append("{} could not be read".format(reasons["unreadable"]))
+    if reasons.get("cloud"):
+        parts.append("{} stored only in iCloud or OneDrive and not downloaded".format(reasons["cloud"]))
     text = ", ".join(parts) or "could not be read"
     if reasons["denied"] and sys.platform == "darwin":
         text += ("; macOS privacy protection blocks some folders: give Terminal Full Disk Access "
@@ -261,12 +271,17 @@ def run(ctx) -> ModuleResult:
         # cleared of anything (D3).
         ctx.emit("[hash] scanning {} ...".format(root))
         tally = {"hashed": 0, "candidates": 0, "unreadable": 0}
-        reasons = {"large": 0, "denied": 0, "unreadable": 0}
+        reasons = {"large": 0, "denied": 0, "unreadable": 0, "cloud": 0}
 
         def _walk_err(exc, _r=r, _t=tally, _w=reasons):
             # Links and special entries are refused by the walker on purpose:
             # not files that were missed (a link's target is fingerprinted where
             # it lies inside a scanned folder), so they are counted, not gaps.
+            if getattr(exc, "strerror", None) == WALK_CLOUD_SKIPPED:
+                _r.skipped += 1
+                _t["unreadable"] += 1
+                _w["cloud"] += 1
+                return
             if getattr(exc, "strerror", None) in (WALK_LINK_REFUSED, WALK_SPECIAL_REFUSED):
                 key = "links_not_followed" if exc.strerror == WALK_LINK_REFUSED else "special_entries"
                 _r.submetrics[key] = _r.submetrics.get(key, 0) + 1

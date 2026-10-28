@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Files kept only in iCloud (macOS "Optimise Mac Storage") or OneDrive (online-only) are
+  no longer downloaded during the file-fingerprint check, which could stall a scan for
+  hours; they are listed as not checked.
+- Windows launcher: uses a Python that actually runs, so the Microsoft Store "python"
+  stand-in no longer makes it fail; falls back to the `py` launcher.
+- 52.174.65.77, a reassignable Azure address, moves to the weaker IP tier like the other
+  cloud IPs, so an undated hit on it alone is no longer reported as a serious finding.
 - Windows launcher (run-scan.cmd): report paths are printed in quotes, so a folder name containing "&" can no longer run an extra command, and a "!" in the folder name no longer breaks the launch (it could be reported as a match without any scan). If the scanner cannot be found, it now says nothing was checked.
 
 ## 0.1.4 (2026-10-28)

@@ -1913,12 +1913,12 @@
         "type": "ip-dst",
         "category": "Network activity",
         "value": "52.174.65.77",
-        "to_ids": true,
+        "to_ids": false,
         "timestamp": "1792281600",
-        "comment": "tier=cc confidence=primary (The Citizen Lab, Exposing AdFection: How Discover-Tech Turned Targeted Ads Into a Pipeline for Zero-Click Mercenary Spyware, 2026-10-15)",
+        "comment": "tier=candiru-ip confidence=primary (The Citizen Lab, Exposing AdFection: How Discover-Tech Turned Targeted Ads Into a Pipeline for Zero-Click Mercenary Spyware, 2026-10-15)",
         "Tag": [
           {
-            "name": "adint:tier=\"cc\""
+            "name": "adint:tier=\"candiru-ip\""
           },
           {
             "name": "adint:confidence=\"primary\""

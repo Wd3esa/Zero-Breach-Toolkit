@@ -97,6 +97,10 @@ def path_problem(path):
 
 WALK_LINK_REFUSED = "symlink or reparse point was not followed"
 WALK_SPECIAL_REFUSED = "special filesystem entry was not opened"
+WALK_CLOUD_SKIPPED = "folder is stored only in iCloud and was not downloaded"
+# macOS marks iCloud placeholders ("Optimise Mac Storage") with this flag; reading or
+# listing one makes macOS download it first, which can stall a scan for hours.
+SF_DATALESS = 0x40000000
 
 
 def walk_local(root, onerror=None):
@@ -124,6 +128,8 @@ def walk_local(root, onerror=None):
                             raise PermissionError(13, WALK_LINK_REFUSED, entry.path)
                         if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
                             raise PermissionError(13, WALK_SPECIAL_REFUSED, entry.path)
+                        if stat.S_ISDIR(info.st_mode) and getattr(info, "st_flags", 0) & SF_DATALESS:
+                            raise PermissionError(13, WALK_CLOUD_SKIPPED, entry.path)
                         (dirs if stat.S_ISDIR(info.st_mode) else files).append(entry.name)
                     except OSError as exc:
                         if onerror:
