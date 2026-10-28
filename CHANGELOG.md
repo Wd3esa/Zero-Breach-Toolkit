@@ -1,20 +1,26 @@
 # Changelog
 
-## Unreleased
+## 0.1.5 (2026-10-28)
 
-- OneDrive online-only files are reported as not checked (they were counted as links).
-- zsh history containing non-English commands is searched instead of skipped as a whole.
-- The build refuses indicator text that could end its embedded string early.
-- Indicator values are cleaned like every other field in the readable report; long
-  lines in iPhone diagnostic reports are capped like crash logs.
+Fewer stalls and false alarms
 - Files kept only in iCloud (macOS "Optimise Mac Storage") or OneDrive (online-only) are
   no longer downloaded during the file-fingerprint check, which could stall a scan for
   hours; they are listed as not checked.
-- Windows launcher: uses a Python that actually runs, so the Microsoft Store "python"
-  stand-in no longer makes it fail; falls back to the `py` launcher.
 - 52.174.65.77, a reassignable Azure address, moves to the weaker IP tier like the other
   cloud IPs, so an undated hit on it alone is no longer reported as a serious finding.
-- Windows launcher (run-scan.cmd): report paths are printed in quotes, so a folder name containing "&" can no longer run an extra command, and a "!" in the folder name no longer breaks the launch (it could be reported as a match without any scan). If the scanner cannot be found, it now says nothing was checked.
+- zsh history containing non-English commands is searched instead of skipped as a whole.
+- Long lines in iPhone diagnostic reports are capped like crash logs.
+
+Windows launcher (run-scan.cmd)
+- Report paths are printed in quotes, so a folder name containing "&" can no longer run an
+  extra command, and a "!" in the folder name no longer breaks the launch (it could be
+  reported as a match without any scan). If the scanner cannot be found, it says so.
+- Uses a Python that actually runs, so the Microsoft Store "python" stand-in no longer makes
+  it fail; falls back to the `py` launcher.
+
+Hardening
+- The build refuses indicator text that could end its embedded string early.
+- Indicator values are cleaned like every other field in the readable report.
 
 ## 0.1.4 (2026-10-28)
 
