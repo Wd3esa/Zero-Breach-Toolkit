@@ -226,7 +226,7 @@ def _ux_fields(data, kind):
         text = "\n".join([program] + argv)
         labelled = isinstance(doc.get("Label"), str) and bool(doc["Label"])
         return text, [] if disabled or not labelled else [program or (argv[0] if argv else "")], ""
-    text = data.decode("utf-8-sig", "strict")
+    text = data.decode("utf-8-sig", "replace" if kind == "history-file" else "strict")
     if "\x00" in text:
         raise ValueError("NUL in text configuration")
     if kind == "desktop":

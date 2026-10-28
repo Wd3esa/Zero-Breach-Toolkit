@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- OneDrive online-only files are reported as not checked (they were counted as links).
+- zsh history containing non-English commands is searched instead of skipped as a whole.
+- The build refuses indicator text that could end its embedded string early.
+- Indicator values are cleaned like every other field in the readable report; long
+  lines in iPhone diagnostic reports are capped like crash logs.
 - Files kept only in iCloud (macOS "Optimise Mac Storage") or OneDrive (online-only) are
   no longer downloaded during the file-fingerprint check, which could stall a scan for
   hours; they are listed as not checked.

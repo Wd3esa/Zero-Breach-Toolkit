@@ -97,7 +97,10 @@ def path_problem(path):
 
 WALK_LINK_REFUSED = "symlink or reparse point was not followed"
 WALK_SPECIAL_REFUSED = "special filesystem entry was not opened"
-WALK_CLOUD_SKIPPED = "folder is stored only in iCloud and was not downloaded"
+WALK_CLOUD_SKIPPED = "stored only in iCloud or OneDrive and was not downloaded"
+# Windows marks OneDrive online-only files with these attributes; opening one
+# downloads it first (RECALL_ON_DATA_ACCESS, RECALL_ON_OPEN, OFFLINE).
+_CLOUD_ONLY_ATTRIBUTES = 0x00400000 | 0x00040000 | 0x00001000
 # macOS marks iCloud placeholders ("Optimise Mac Storage") with this flag; reading or
 # listing one makes macOS download it first, which can stall a scan for hours.
 SF_DATALESS = 0x40000000
@@ -123,8 +126,10 @@ def walk_local(root, onerror=None):
                 for entry in entries:
                     try:
                         info = entry.stat(follow_symlinks=False)
-                        if (stat.S_ISLNK(info.st_mode)
-                                or getattr(info, "st_file_attributes", 0) & 0x400):
+                        attributes = getattr(info, "st_file_attributes", 0)
+                        if attributes & 0x400 and attributes & _CLOUD_ONLY_ATTRIBUTES:
+                            raise PermissionError(13, WALK_CLOUD_SKIPPED, entry.path)
+                        if stat.S_ISLNK(info.st_mode) or attributes & 0x400:
                             raise PermissionError(13, WALK_LINK_REFUSED, entry.path)
                         if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
                             raise PermissionError(13, WALK_SPECIAL_REFUSED, entry.path)

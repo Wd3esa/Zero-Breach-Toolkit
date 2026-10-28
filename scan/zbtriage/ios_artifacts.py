@@ -775,6 +775,9 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
             if len(lines) > _IA_LINE_LIMIT:
                 gap(check, "diagnostic report longer than {:,} lines; the rest was not searched".format(_IA_LINE_LIMIT))
             for line_no, line in enumerate(lines[:_IA_LINE_LIMIT], 1):
+                if len(line) > 65536:
+                    gap(check, "oversized diagnostic record was not searched")
+                    continue
                 text_matches(line, key, check, line_no, "text in a diagnostic report; execution unverified")
                 match = re.fullmatch(r"(?:Process|Command):\s+(.+?)(?:\s+\[\d+\])?\s*", line)
                 path = re.fullmatch(r"Path:\s+(/\S.*?)\s*", line)

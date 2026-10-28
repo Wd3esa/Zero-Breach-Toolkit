@@ -14,8 +14,10 @@ This does NOT block `subprocess` (OS pipes, not Python sockets), so the host
 module can still read the LOCAL DNS resolver cache via PowerShell — reading an
 already-cached entry resolves nothing.
 
-The IOC-update path (not implemented here) is the one explicitly-invoked network
-operation the spec allows; it must run OUTSIDE this guard and verify a signature.
+The indicator update (--update, in feeds.py) is the one explicitly invoked
+network operation; it runs outside this guard, only from an allow-list of official
+sources, and records each file's SHA-256 so later changes are refused. Sources are
+not signed by their publishers, so there is no signature to verify.
 """
 
 from __future__ import annotations

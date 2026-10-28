@@ -1141,7 +1141,7 @@ def _safe_text(value, limit=2000):
 
 # Tighter limits for the single-line fields an attacker can fill most freely.
 _HIT_FIELD_LIMITS = {"profile": 120, "observed": 64, "location": 500,
-                     "detail": 500}
+                     "detail": 500, "indicator": 300}
 
 
 def _human_document(document):
@@ -1169,6 +1169,8 @@ def _human_document(document):
             for key in ("location", "detail", "observed", "profile"):
                 if key in hit:
                     hit[key] = scrub(hit[key], _HIT_FIELD_LIMITS[key])
+            if isinstance(hit.get("indicator"), str):
+                hit["indicator"] = _safe_text(hit["indicator"], _HIT_FIELD_LIMITS["indicator"])
         for lead in module.get("leads", []):
             for key in ("location", "what", "observed"):
                 if key in lead:

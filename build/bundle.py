@@ -239,12 +239,21 @@ A('# The real file is iocs/adfection_iocs.txt in the project. Its provenance')
 A('# comments are kept verbatim so every indicator can be traced to its report.')
 A('IOC_BUILD_EPOCH = {!r}  # the IOC set\'s "as-of" date (deterministic)'.format(
     ioc_mtime))
+def _embeddable(text, label):
+    """Indicator text goes inside r'''...''' in the single file. Two quotes in a row
+    or a backslash could end that string early and turn data into code, so such
+    text is refused rather than escaped."""
+    if "''" in text or "\\" in text:
+        raise SystemExit("refusing to embed {}: it contains '' or a backslash".format(label))
+    return text
+
+
 A("IOC_DATA = r'''")
-A(ioc_text.replace("'''", "' ' '"))
+A(_embeddable(ioc_text, "the indicator file"))
 A("'''")
 A('# The hand-curated mercenary-vendor set (iocs/curated_mercenary.txt), e.g. Paragon.')
 A("IOC_DATA_2 = r'''")
-A(read(IOC2).replace("'''", "' ' '"))
+A(_embeddable(read(IOC2), "the curated indicator file"))
 A("'''")
 A('')
 

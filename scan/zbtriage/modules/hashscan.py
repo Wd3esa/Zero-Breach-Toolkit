@@ -27,9 +27,7 @@ from ..result import Hit, ModuleResult, EV_ON_DISK
 from ..localpaths import (path_problem, walk_local, WALK_LINK_REFUSED, WALK_SPECIAL_REFUSED,
                           WALK_CLOUD_SKIPPED, SF_DATALESS)
 
-# Windows marks OneDrive online-only files with these attributes; opening one
-# downloads it first (RECALL_ON_DATA_ACCESS, RECALL_ON_OPEN, OFFLINE).
-_CLOUD_ONLY_ATTRIBUTES = 0x00400000 | 0x00040000 | 0x00001000
+from ..localpaths import _CLOUD_ONLY_ATTRIBUTES
 
 NAME = "hash"
 
