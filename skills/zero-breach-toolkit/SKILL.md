@@ -37,6 +37,12 @@ new local output paths outside the evidence directory. Preserve the exit code,
 stderr and any partial report. The standalone build also accepts `--no-pause`.
 Do not rerun a scan merely because exit code 2 or 3 is nonzero.
 
+To compare with an earlier check, add `--baseline PRIOR_JSON`, pointing at a report
+saved earlier with `--json` (not `--share-json`). The report then carries a `baseline`
+block and a CHANGES section: new, cleared and persisting findings and leads. It is
+offline and read-only and never changes the verdict or exit code. Read `baseline.new_findings`
+first. A cleared item is not proof of removal; scope differences are noted in `baseline.notes`.
+
 Encrypted backups use `--backup-password`, which prompts privately in a terminal.
 Never put passwords in chat, command arguments, environment variables or reports.
 If a private terminal prompt is unavailable, explain that the owner must run that

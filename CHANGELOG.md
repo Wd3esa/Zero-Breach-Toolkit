@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+Reports
+- New `--baseline PATH` compares a check against a report saved earlier with `--json` and
+  adds a **CHANGES SINCE YOUR LAST CHECK** section (and a `baseline` block in the JSON):
+  what is new, cleared or still present since then, for both indicator matches and
+  worth-a-look items, with counts. It is for re-checking after taking action or at
+  intervals, so the new items stand out. Entirely offline and read-only: it reads only
+  that one local file, contacts nothing, changes nothing, and never alters the verdict or
+  the exit code, which still describe the current check. A cleared item is not presented
+  as proof of removal (a log may have rolled over, a file been touched, or the scopes
+  differ), and any network indicator it echoes is defanged like the rest of the report.
+
 ## 0.1.7 (2026-10-28)
 
 Android

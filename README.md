@@ -317,10 +317,29 @@ python -X utf8 scan/zero-breach-toolkit.py --quick                     # faster:
 python -X utf8 scan/zero-breach-toolkit.py --phone "FOLDER"            # a phone collection or backup
 python -X utf8 scan/zero-breach-toolkit.py --json report.json          # machine-readable report
 python -X utf8 scan/zero-breach-toolkit.py --share-json summary.json   # minimal summary for sharing
+python -X utf8 scan/zero-breach-toolkit.py --baseline report.json      # what changed since an earlier report
 ```
 
 Put folder paths in quotes, especially if they contain spaces. On Linux or macOS,
 `sh scan/run-scan.sh` takes the same options.
+
+### Compare with an earlier check
+
+If you ran a check before and saved it with `--json report.json`, pass that file back
+with `--baseline report.json` on a later run. The report then opens with a **CHANGES
+SINCE YOUR LAST CHECK** section listing what is **new** (appeared since the saved
+report), what has **cleared** (was there before, not seen now) and what still persists,
+for both indicator matches and worth-a-look items.
+
+This is what you want when re-checking after taking action, or at intervals: the new
+items are the ones to read first. It is entirely offline — it only reads that one local
+file, contacts nothing and changes nothing — and it does not change the verdict or the
+exit code, which still describe the current check alone. A cleared item is **not** proof
+that spyware was removed: an entry can disappear because a log rolled over, a file was
+touched, or the two checks used different scopes.
+
+Save the baseline with `--json` (the full report), not `--share-json`: the sharing
+summary holds only counts, so there is nothing to compare item by item.
 
 ### Verify what you run
 

@@ -275,6 +275,7 @@ for label, fname in (("result", "result.py"),
                      ("readers", "readers.py"),
                      ("contract", "contract.py"),
                      ("evidence", "evidence.py"),
+                     ("baseline", "baseline.py"),
                      ("report", "report.py"),
                      ("workflow", "workflow.py"),
                      ("handoff", "handoff.py"),
@@ -372,6 +373,11 @@ def _bundle_main(argv=None):
                    help="also write a machine-readable report to PATH")
     p.add_argument("--share-json", metavar="PATH",
                    help="write a minimal sharing summary without artifact text or indicator values")
+    p.add_argument("--baseline", metavar="PATH",
+                   help="compare this check with a report saved earlier by --json "
+                        "and show what is new, cleared or still present since then. "
+                        "Reads only that local file; changes nothing and adds no "
+                        "network. A cleared item is not proof spyware was removed.")
     p.add_argument("--iocs", metavar="PATH", action="append", default=None,
                    help="use external indicator file(s) instead of the embedded "
                         "one; repeat to combine. Accepts the curated format and "
@@ -479,7 +485,8 @@ def _bundle_main(argv=None):
     # path_problem refuses relative paths and "--json report.json" is the
     # documented usage.
     for label, value in ([("--iocs", v) for v in (args.iocs or [])]
-                         + [("--json", args.json), ("--share-json", args.share_json), ("--phone", args.phone)]):
+                         + [("--json", args.json), ("--share-json", args.share_json),
+                            ("--baseline", args.baseline), ("--phone", args.phone)]):
         if value:
             problem = path_problem(os.path.abspath(value))
             if problem:
@@ -487,6 +494,17 @@ def _bundle_main(argv=None):
                     label, value, problem), file=sys.stderr)
                 _hold(args)
                 return 1
+
+    # Load the baseline before the scan so a bad path fails at once, not after
+    # fifteen minutes. The parsed document rides on args for finalize_report.
+    args.baseline_document = None
+    if args.baseline:
+        try:
+            args.baseline_document = load_baseline(args.baseline)
+        except BaselineError as exc:
+            print("error: {}".format(exc), file=sys.stderr)
+            _hold(args)
+            return 1
 
     if args.collect_android:
         folder, code = collect_android(args.collect_android, args.age_recipient_file)

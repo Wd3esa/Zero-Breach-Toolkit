@@ -324,6 +324,7 @@ def describe_document() -> Dict[str, Any]:
         },
         "workflow": {
             "readable_report": "--report PATH saves the displayed report independently of JSON outputs",
+            "baseline": "--baseline PATH compares this scan with a report saved earlier by --json and adds a 'baseline' block (new/cleared/persisting findings and leads, with counts and caveats). Offline and read-only; it never changes the verdict or exit code, and a cleared item is not proof of removal",
             "follow_up": "Interactive start-menu checks offer evidence inspection, coverage review and export; --post-menu requests this after an explicit scan; --no-menu disables it",
             "no_scan": "Leaving the start menu returns 4, produces no scan verdict and saves no report",
             "evidence_export": "--evidence-bundle PATH writes a NEW unencrypted private ZIP. Repeat --evidence-file PATH for deliberately selected originals. No uploads or inferred file selections.",
@@ -393,6 +394,17 @@ def finalize_report(iocs, results, started, args, cancelled=False):
     document["completed_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     document["indicator_fingerprints"] = workflow_fingerprints(iocs)
     document["must_relay"] = contract_must_relay(document)
+    # Optional comparison with an earlier --json report. Additive only: it never
+    # changes the verdict or the exit code, which describe the current scan. A
+    # failure here must not cost the person their report, so it is contained.
+    baseline_document = getattr(args, "baseline_document", None)
+    if baseline_document is not None:
+        try:
+            from .baseline import compare
+            document["baseline"] = compare(
+                baseline_document, document, baseline_path=getattr(args, "baseline", "") or "")
+        except (ValueError, TypeError, KeyError) as exc:
+            _report_console("[could not compare with baseline: {}]".format(exc), sys.stderr)
     failed = False
     for label, path, minimal in (("JSON report", args.json, False), ("sharing summary", args.share_json, True)):
         if not path:
@@ -570,6 +582,11 @@ def render_human(document: Dict[str, Any]) -> str:
 
     # The answer first. Everything after it is the supporting evidence.
     out.extend(render_summary(document).split("\n"))
+
+    # When a baseline was given, what changed since it comes right after the
+    # verdict: for someone re-checking after taking action, "what is new" is the
+    # thing they opened the report to see.
+    _render_baseline(w, document)
 
     ioc = document["ioc_set"]
     age = ioc["age_days"]
@@ -1394,6 +1411,80 @@ def _support_options(w):
     w("")
     w("A saved reference or advertising-network trace alone is not a reason")
     w("to assume spyware infection. No result from this tool rules it out.")
+
+
+def _baseline_indicator(entry: Dict[str, Any]) -> str:
+    """Defang a baseline entry's indicator exactly as the detail section would:
+    network addresses are neutered, an app id or process name is left readable."""
+    value = _safe_text(entry.get("indicator", ""), _HIT_FIELD_LIMITS["indicator"])
+    net = "" if entry.get("kind") in _NOT_ADDRESSES else entry.get("indicator", "")
+    return _defang(value) if net else value
+
+
+def _render_baseline(w, document: Dict[str, Any]) -> None:
+    block = document.get("baseline")
+    if not isinstance(block, dict):
+        return
+    counts = block.get("counts", {})
+    w(_RULE)
+    w("CHANGES SINCE YOUR LAST CHECK")
+    saved = block.get("baseline_completed_at")
+    ver = block.get("baseline_version")
+    w("  Compared with a report you saved earlier{}{}.".format(
+        " on " + _safe_text(saved, 40) if saved else "",
+        " (version {})".format(_safe_text(ver, 20)) if ver else ""))
+    w("  new {} finding(s), {} cleared, {} still present"
+      "   |   worth-a-look: {} new, {} cleared".format(
+          counts.get("new_findings", 0), counts.get("cleared_findings", 0),
+          counts.get("persisting_findings", 0), counts.get("new_leads", 0),
+          counts.get("cleared_leads", 0)))
+    w("")
+
+    def _finding_line(entry, marker):
+        w("  {} {}  ({} check) [{}]".format(
+            marker, _baseline_indicator(entry), _safe_text(entry.get("module", ""), 40),
+            _safe_text(entry.get("evidence", ""), 40)))
+        if entry.get("baseline_evidence"):
+            w("        evidence changed from {} to {}".format(
+                _safe_text(entry["baseline_evidence"], 40), _safe_text(entry.get("evidence", ""), 40)))
+        loc = entry.get("location")
+        if loc:
+            w("        at   : {}".format(
+                _defang_text(_safe_text(loc, _HIT_FIELD_LIMITS["location"]), entry.get("indicator", ""))))
+
+    def _lead_line(entry, marker):
+        w("  {} {}  ({} check)".format(
+            marker, _safe_text(entry.get("what", ""), 300), _safe_text(entry.get("module", ""), 40)))
+        loc = entry.get("location")
+        if loc:
+            w("        at   : {}".format(_defang_text(_safe_text(loc, _HIT_FIELD_LIMITS["location"]), "")))
+
+    new_f = block.get("new_findings") or []
+    if new_f:
+        w("  NEW indicator matches (appeared since the baseline) -- read these first:")
+        for entry in new_f:
+            _finding_line(entry, "+")
+        w("")
+    new_l = block.get("new_leads") or []
+    if new_l:
+        w("  NEW worth-a-look items since the baseline:")
+        for entry in new_l:
+            _lead_line(entry, "+")
+        w("")
+    cleared_f = block.get("cleared_findings") or []
+    if cleared_f:
+        w("  CLEARED since the baseline (present before, not seen now):")
+        for entry in cleared_f:
+            _finding_line(entry, "-")
+        w("  Note: an item can disappear because a log rolled over, a file was")
+        w("  touched or the scope differs. This is NOT proof that spyware was removed.")
+        w("")
+    for note in block.get("notes") or []:
+        for i, line in enumerate(_wrap(_safe_text(note, 500), 66)):
+            w(("  Note: " if i == 0 else "        ") + line)
+    if not (new_f or new_l or cleared_f) and not (block.get("notes")):
+        w("  Nothing changed since the baseline among findings and worth-a-look items.")
+    w("")
 
 
 def render_summary(document: Dict[str, Any]) -> str:

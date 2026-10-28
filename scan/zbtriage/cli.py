@@ -1,6 +1,7 @@
 """Command-line entry point and orchestration.
 
   zero-breach-toolkit [--quick] [--json <path>] [--share-json <path>] [--iocs <path>]
+                      [--baseline <path>]
 
 Default behaviour (no flags): read-only tier-1 IOC match across the browser, hash
 and host modules, under the no-network guard. Requires no administrator (D7).
@@ -101,6 +102,11 @@ def _parse(argv: List[str]) -> argparse.Namespace:
     p.add_argument("--share-json", metavar="PATH",
                    help="write a minimal sharing summary without paths, profiles, "
                         "message contents, timestamps or indicator values")
+    p.add_argument("--baseline", metavar="PATH",
+                   help="compare this check with a report saved earlier by --json "
+                        "and show what is new, cleared or still present since then. "
+                        "Reads only that local file; changes nothing and adds no "
+                        "network. A cleared item is not proof spyware was removed.")
     p.add_argument("--iocs", metavar="PATH", action="append", default=None,
                    help="indicator file; repeat --iocs to combine several. Accepts the "
                         "curated tab-separated file and STIX 2 bundles "
@@ -232,6 +238,19 @@ def _main(argv: List[str] = None) -> int:
             return 1
     if args.phone and _refuse_remote("--phone", args.phone):
         return 1
+
+    # Load the baseline before the scan so a bad path fails in a second, not
+    # after fifteen minutes. The parsed document rides on args for the report.
+    args.baseline_document = None
+    if args.baseline:
+        if _refuse_remote("--baseline", args.baseline):
+            return 1
+        from .baseline import load_baseline, BaselineError
+        try:
+            args.baseline_document = load_baseline(args.baseline)
+        except BaselineError as exc:
+            print("error: {}".format(exc), file=sys.stderr)
+            return 1
 
     if args.collect_android:
         from .phoneguide import collect_android
