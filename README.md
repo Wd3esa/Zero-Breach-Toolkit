@@ -334,13 +334,13 @@ The single-file `zero-breach-toolkit.py` attached to a release is generated from
 source. Rebuild it from the release's tag and compare:
 
 ```
-git checkout v0.1.6
+git checkout v0.1.7
 python build/bundle.py
 python -c "import hashlib; print(hashlib.sha256(open('dist/zero-breach-toolkit.py','rb').read()).hexdigest())"
 ```
 
-For v0.1.6 the file is 950,615 bytes, SHA-256
-`f80ec4a0e3e2f09ae8c6f7d3e9ed02705d8e927671a68c1c7ff5eebe71c20d5e`. The size and SHA-256
+For v0.1.7 the file is 958,040 bytes, SHA-256
+`5b44964aa6741b9562db84b3bed680d3a2aa80dd365f6a4c30b0701a32f2bb15`. The size and SHA-256
 published with each release are authoritative. The build is deterministic, so a matching
 rebuild means the published file contains that source and nothing else. Releases are also
 GPG-signed; see [docs/VERIFYING.md](docs/VERIFYING.md).

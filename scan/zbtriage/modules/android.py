@@ -46,7 +46,7 @@ import zlib
 
 from ..iocs import (TYPE_ANDROID_PROP, TYPE_APP_CERT, TYPE_APP_ID, TYPE_DOMAIN,
                     TYPE_FILE_NAME, TYPE_FILE_PATH, TYPE_PROCESS, TYPE_SHA256, Indicator,
-                    IocSet, ioc_exact_identity, ioc_path_mentioned)
+                    IocSet, ioc_exact_identity, ioc_path_mentioned, ios_only, watchware)
 from ..localpaths import path_problem
 from ..result import EV_DEVICE_LOG, EV_ON_DEVICE, EV_RECEIVED, EV_REFERENCED, Hit, Lead, ModuleResult
 
@@ -484,6 +484,8 @@ def _an_app_id_set(ctx):
     shadow = []
     for kind in (TYPE_APP_ID,):
         for ind in ctx.iocs.of_type(kind):
+            if ios_only(ind):
+                continue        # an iPhone bundle id, not an Android package
             if "." in ind.value and ind.value not in originals:
                 originals[ind.value] = ind
                 shadow.append(Indicator(ind.value, ind.tier, ind.confidence, TYPE_DOMAIN,
@@ -517,8 +519,14 @@ def _an_packages(r, ctx, folder, info):
         name = str(pkg.get("name") or "")
         where = "app {}".format(name)
         ind = iocs.lookup_typed(TYPE_APP_ID, name)
+        if ind and ios_only(ind):
+            ind = None
         if ind:
-            if ind.tier == "stalkerware":
+            if ind.tier == "stalkerware" and watchware(ind):
+                detail = ("a monitoring app that does not hide itself is installed: {}{} - "
+                          "often a family-safety app".format(
+                              name, " ({})".format(ind.family) if ind.family else ""))
+            elif ind.tier == "stalkerware":
                 detail = ("a phone-monitoring app is installed: {}{} - some are sold as "
                           "family-safety apps".format(
                               name, " ({})".format(ind.family) if ind.family else ""))
@@ -642,7 +650,7 @@ def _an_processes(r, ctx, folder):
             return
         seen.add(app)
         ind = ctx.iocs.lookup_typed(TYPE_APP_ID, app)
-        if ind:
+        if ind and not ios_only(ind):
             before = len(r.hits)
             _an_hit(r, ind, "running process " + value,
                     "an app the researchers name was running")

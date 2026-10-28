@@ -19,6 +19,7 @@ import time
 import zipfile
 import zlib
 
+from ..iocs import ios_only
 from ..localpaths import path_problem
 from ..result import EV_DEVICE_LOG, EV_DNS, Hit, ModuleResult
 
@@ -181,6 +182,8 @@ class _IlReader:
             return
         self.seen.add(identity)
         for ind, grade, detail in matches:
+            if ind is not None and ios_only(ind):
+                continue        # an iPhone bundle id, not an Android package
             self.hit(ind, grade, where, original, observed, detail)
         self.ran.add(_IL_CHECKS[kind])
         self.result.checked += 1

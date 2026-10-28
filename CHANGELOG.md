@@ -1,6 +1,20 @@
 # Changelog
 
-## 0.1.6 (2026-10-28)
+## 0.1.7 (2026-10-28)
+
+Android
+- Pixel phones no longer show eight false monitoring-app matches. A Google feature flag
+  lists hundreds of apps the notification features skip, family-safety apps among them;
+  server-pushed feature flags (`dumpsys device_config` and the CONFIG table of `dumpsys
+  settings`) are no longer searched for app names. Contributed by Luke Hutchison.
+- iPhone app ids from the monitoring-app list are no longer matched on Android. The
+  publisher's export writes both kinds the same way; the ids it lists only as iPhone
+  bundles are now recorded with each release and skipped by the Android checks.
+
+Reports
+- A monitoring app that does not hide itself (often a family-safety app, which the
+  publisher calls "watchware") is described as such, with the same safety advice.
+
 
 Detection
 - Hosts hidden by URL escapes are found: percent-encoded (also double-encoded) and

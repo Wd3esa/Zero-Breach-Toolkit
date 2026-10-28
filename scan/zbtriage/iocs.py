@@ -378,6 +378,42 @@ def _merge_views(main, extra, spans, text):
     return out
 
 
+def _context_records(ind):
+    out = []
+    for raw in getattr(ind, "contexts", ()) or ():
+        try:
+            record = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(record, dict):
+            out.append(record)
+    return out
+
+
+def ios_only(ind) -> bool:
+    """True when every publisher record for this indicator names only Apple
+    platforms: an iPhone bundle id, which an Android package can share in form
+    but never in meaning, so the Android checks must not match it."""
+    records = _context_records(ind)
+    if not records:
+        return False
+    apple = {"ios", "ipados", "iphone"}
+    for record in records:
+        platforms = record.get("platforms")
+        if not isinstance(platforms, list) or not platforms:
+            return False
+        if not {str(p).lower() for p in platforms} <= apple:
+            return False
+    return True
+
+
+def watchware(ind) -> bool:
+    """True when the publisher classes this monitoring app as one that does not
+    hide itself (often a family-safety app), as ECHAP's "watchware" does."""
+    records = _context_records(ind)
+    return bool(records) and all(r.get("monitoring") == "watchware" for r in records)
+
+
 def _prune_parents(found, hay) -> list:
     """Drop a parent domain whose every occurrence is just the tail of a matched
     child. "noas.powerium.net" in a cookie also contains "powerium.net", and both

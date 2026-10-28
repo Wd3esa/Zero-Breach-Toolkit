@@ -1037,10 +1037,21 @@ ON_DISK_NOT_MALWARE_GLOSS = (
     "reasons. Worth establishing how it got here; not proof of anything")
 
 
+def _hit_watchware(hit) -> bool:
+    """The publisher classes this monitoring app as one that does not hide
+    itself (ECHAP's "watchware"), on every record that names it."""
+    records = hit.get("indicator_context") or []
+    return bool(records) and all(isinstance(r, dict) and r.get("monitoring") == "watchware"
+                                 for r in records)
+
+
 def _headline_for(hit) -> str:
     """The summary headline for one serious hit, chosen by grade AND tier."""
     if hit.get("withdrawn_only"):
         return "HISTORICAL MATCH TO A WITHDRAWN INDICATOR - REVIEW SOURCE CONTEXT"
+    if hit.get("tier") == "stalkerware" and _hit_watchware(hit):
+        return ("A MONITORING APP THAT DOES NOT HIDE ITSELF (OFTEN A FAMILY-SAFETY APP) "
+                "WAS FOUND - DID YOU, OR SOMEONE YOU TRUST, INSTALL IT?")
     if hit.get("tier") == "stalkerware":
         return ("A PHONE-MONITORING APP OR ITS SERVER WAS FOUND - DID YOU, OR SOMEONE "
                 "YOU TRUST, INSTALL IT?")
@@ -1253,7 +1264,19 @@ def _advice_paragraph(w, text):
 def _next_steps(w, hits):
     action = max(_recommended_action(h) for h in hits)
     w("  WHAT TO DO")
-    if any(h.get("tier") == "stalkerware" for h in hits):
+    monitoring = [h for h in hits if h.get("tier") == "stalkerware"]
+    if monitoring and all(_hit_watchware(h) for h in monitoring):
+        _advice_paragraph(w, "A monitoring app that does not hide itself was found, "
+                         "often a family-safety app. If you installed it yourself, or "
+                         "someone you trust manages this phone, this may be expected. "
+                         "If not, someone may be monitoring you, even though the app "
+                         "is not hidden.")
+        w("")
+        _advice_paragraph(w, "Removing the app can alert whoever installed it. If you "
+                         "could be in danger, talk to a support service before you "
+                         "change anything: https://stopstalkerware.org/")
+        w("")
+    elif monitoring:
         _advice_paragraph(w, "A phone-monitoring app, or its company's server, was "
                          "found. If you installed it yourself, or someone you trust "
                          "manages this phone (some are family-safety apps), this may "

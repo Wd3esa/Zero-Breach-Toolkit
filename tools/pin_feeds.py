@@ -27,7 +27,12 @@ sys.path.insert(0, os.path.join(ROOT, "scan"))
 from zbtriage import feeds  # noqa: E402
 
 FEEDS_PY = os.path.join(ROOT, "scan", "zbtriage", "feeds.py")
-BLOCK = re.compile(r"(?ms)^FEED_PINS = \{\n.*?^\}\nFEED_FILE_SHA256 = \{\n.*?^\}\n")
+BLOCK = re.compile(r"(?ms)^FEED_PINS = \{\n.*?^\}\nFEED_IOS_ONLY_APP_IDS = \{\n.*?^\}\n"
+                   r"FEED_FILE_SHA256 = \{\n.*?^\}\n")
+
+# Sources whose STIX export writes iPhone bundle ids and Android packages alike
+# as app ids, and the publisher files at the same commit that tell them apart.
+IOS_ID_FILES = {"echap-stalkerware": ("ioc.yaml", "watchware.yaml")}
 
 
 def branch_head(repo, branch):
@@ -56,9 +61,47 @@ def file_hashes(pins):
     return out
 
 
-def render(pins, hashes):
+def yaml_lists(text, key):
+    """Every item of every `key:` list in a simple YAML file (block lists of
+    plain scalars, as the publisher writes them). No YAML library needed."""
+    items, inside, indent = [], False, 0
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        depth = len(line) - len(line.lstrip())
+        if inside and stripped.startswith("- ") and depth >= indent:
+            items.append(stripped[2:].strip().strip("'\"").lower())
+            continue
+        inside = stripped == key + ":"
+        indent = depth
+    return items
+
+
+def ios_only_ids(pins):
+    """{source id: sorted app ids the publisher lists only as iPhone bundles}."""
+    out = {}
+    for sid, names in IOS_ID_FILES.items():
+        src = next(s for s in feeds.SOURCES if s["id"] == sid)
+        ios, android = set(), set()
+        for name in names:
+            url = feeds.RAW + src["repo"] + "/" + pins[src["repo"]] + "/" + name
+            text = feeds._fetch(url).decode("utf-8")
+            ios.update(yaml_lists(text, "ios_bundles"))
+            android.update(yaml_lists(text, "packages"))
+        out[sid] = sorted(ios - android)
+        print("  {}: {} iPhone-only bundle ids".format(sid, len(out[sid])))
+    return out
+
+
+def render(pins, hashes, ios_ids):
     lines = ["FEED_PINS = {"]
     lines += ['    "{}": "{}",'.format(k, pins[k]) for k in sorted(pins)]
+    lines += ["}", "FEED_IOS_ONLY_APP_IDS = {"]
+    for sid in sorted(ios_ids):
+        lines.append('    "{}": ['.format(sid))
+        lines += ['        "{}",'.format(v) for v in ios_ids[sid]]
+        lines.append("    ],")
     lines += ["}", "FEED_FILE_SHA256 = {"]
     lines += ['    "{}": "{}",'.format(k, hashes[k]) for k in sorted(hashes)]
     lines += ["}", ""]
@@ -80,6 +123,8 @@ def main(argv=None):
         if missing:
             raise SystemExit("not pinned: " + ", ".join(missing))
         hashes = file_hashes(feeds.FEED_PINS)
+        if ios_only_ids(feeds.FEED_PINS) != {k: list(v) for k, v in feeds.FEED_IOS_ONLY_APP_IDS.items()}:
+            raise SystemExit("recorded iPhone-only app ids differ from the pinned publisher files")
         wrong = sorted(k for k in hashes if feeds.FEED_FILE_SHA256.get(k) != hashes[k])
         if wrong or set(feeds.FEED_FILE_SHA256) != set(hashes):
             raise SystemExit("recorded hashes differ for: " + ", ".join(wrong or ["(source list)"]))
@@ -93,10 +138,11 @@ def main(argv=None):
             raise SystemExit("{}: not a full commit SHA: {}".format(repo, pins[repo]))
         print("{} @ {}".format(repo, pins[repo]))
     hashes = file_hashes(pins)
+    ios_ids = ios_only_ids(pins)
     text = open(FEEDS_PY, encoding="utf-8").read()
     if len(BLOCK.findall(text)) != 1:
         raise SystemExit("feeds.py: pinned-revision block not found exactly once")
-    text = BLOCK.sub(lambda _m: render(pins, hashes), text)
+    text = BLOCK.sub(lambda _m: render(pins, hashes, ios_ids), text)
     with open(FEEDS_PY, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(text)
     print("wrote {} pins and {} file hashes to feeds.py".format(len(pins), len(hashes)))

@@ -72,6 +72,15 @@ FEED_PINS = {
     "citizenlab/malware-indicators": "7a7ae9278fa2c0252e9e40faed9b498d6a8d5248",
     "mvt-project/mvt-indicators": "b22ddf05e1a31e7732b8895676987c5c3482ef65",
 }
+FEED_IOS_ONLY_APP_IDS = {
+    "echap-stalkerware": [
+        "com.contentwatch.ghoti.cp2.parent",
+        "com.life360.safetymap",
+        "com.qustodio.mdm.app.family.pro",
+        "com.qustodio.par.qustodio-family-parental-control-app",
+        "com.wheremychildren.ios",
+    ],
+}
 FEED_FILE_SHA256 = {
     "amnesty-android-campaign-2023": "28da50042006281d56c17dff08f06bba3ba310bc18cc23040780850131b2efdb",
     "amnesty-cytrox-2021": "6fe92193d9e17c21a16eb7abe93a418a2e40c0176dcb56fb30539f84136391bb",
@@ -298,6 +307,63 @@ def load_list(path: str, fmt: str, source: str, family: str) -> IocSet:
     return s
 
 
+def _stix_monitoring_kinds(path):
+    """{indicator value: "watchware" | "stalkerware"} from the malware objects'
+    descriptions in a stalkerware STIX bundle. A value tied to both kinds is
+    treated as stalkerware, the stronger reading."""
+    try:
+        with open(path, "rb") as fh:
+            doc = json.loads(fh.read(MAX_DOWNLOAD + 1).decode("utf-8"))
+        objects = doc.get("objects") if isinstance(doc, dict) else None
+        if not isinstance(objects, list):
+            return {}
+    except (OSError, ValueError, UnicodeDecodeError):
+        return {}
+    kind_of = {}
+    for o in objects:
+        if isinstance(o, dict) and o.get("type") == "malware" and isinstance(o.get("id"), str):
+            text = str(o.get("description") or "").strip().lower()
+            if text.startswith("watchware"):
+                kind_of[o["id"]] = "watchware"
+            elif text.startswith("stalkerware"):
+                kind_of[o["id"]] = "stalkerware"
+    patterns = {o.get("id"): o.get("pattern") for o in objects
+                if isinstance(o, dict) and o.get("type") == "indicator"}
+    out = {}
+    for o in objects:
+        if not (isinstance(o, dict) and o.get("type") == "relationship"):
+            continue
+        kind = kind_of.get(o.get("target_ref"))
+        pattern = patterns.get(o.get("source_ref"))
+        if not kind or not isinstance(pattern, str) or "='" not in pattern:
+            continue
+        value = pattern.split("='", 1)[1].rsplit("'", 1)[0].strip().lower()
+        if out.get(value) != "stalkerware":
+            out[value] = kind
+    return out
+
+
+def _mark_contexts(ind, kind, ios):
+    """The indicator's publisher records with the monitoring kind and, for an
+    iPhone-only bundle id, the platform added."""
+    if not kind and not ios:
+        return ind.contexts
+    records = []
+    for raw in ind.contexts or ():
+        try:
+            record = json.loads(raw)
+        except (TypeError, ValueError):
+            record = None
+        if not isinstance(record, dict):
+            return ind.contexts
+        if kind:
+            record["monitoring"] = kind
+        if ios:
+            record["platforms"] = ["ios"]
+        records.append(json.dumps(record, sort_keys=True))
+    return tuple(records)
+
+
 def _load_source_file(src: Dict[str, str], path: str) -> IocSet:
     cite = "{} ({})".format(src["cite"], src["name"])
     if src["format"] == "stix2":
@@ -313,7 +379,16 @@ def _load_source_file(src: Dict[str, str], path: str) -> IocSet:
         # spyware; the report asks whether the person knows about the app
         # instead. Indicators are immutable:
         # rebuild the set, keeping what load() recorded about the file.
-        retiered = IocSet([dataclasses.replace(i, tier="stalkerware")
+        # The publisher's own classification travels with each indicator:
+        # "watchware" for apps that do not hide themselves (the report words
+        # them accordingly), and iPhone bundle ids marked as such so the
+        # Android checks never match them (the STIX export writes both kinds
+        # as app ids; the pinned list comes from the publisher's YAML).
+        kinds = _stix_monitoring_kinds(path) if src["format"] == "stix2" else {}
+        ios_ids = set(FEED_IOS_ONLY_APP_IDS.get(src["id"], ()))
+        retiered = IocSet([dataclasses.replace(
+                               i, tier="stalkerware",
+                               contexts=_mark_contexts(i, kinds.get(i.value), i.value in ios_ids))
                            for i in loaded.indicators],
                           loaded.source_path, loaded.source_mtime)
         retiered.asof = loaded.asof
