@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.6 (2026-10-28)
 
 Detection
 - Hosts hidden by URL escapes are found: percent-encoded (also double-encoded) and
