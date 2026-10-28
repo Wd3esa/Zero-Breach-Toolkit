@@ -67,7 +67,8 @@ def _domains(ioc_set, include_historical):
     for ind in ioc_set.domains:
         if ind.value in BLOCKLIST_EXCLUSIONS or ind.value in SHARED_HOSTING_PARENTS:
             continue
-        if ind.tier == "historical" and not include_historical:
+        # Names that may belong to someone else now would block their site.
+        if ind.tier in ("historical", "reclaimable") and not include_historical:
             continue
         out.append(ind.value)
     # Deterministic and de-duplicated.

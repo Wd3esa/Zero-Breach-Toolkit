@@ -151,6 +151,10 @@ TIER_DESCRIPTION = {
     "delivery": "Discover-Tech / Controlium ad-delivery infrastructure. An "
                 "impression from this is NOT proof of infection — not every ad "
                 "carried a payload.",
+    "reclaimable": "A name from a published campaign that may since have passed to "
+                   "someone else (a shared cloud-platform hostname, or a domain "
+                   "registered again after the report). Only meaningful if the hit is "
+                   "dated within the campaign period.",
     "historical": "Infrastructure attributed in older Candiru campaigns. "
                   "Interpret dated evidence in the cited report's context; "
                   "current ownership and activity are not established.",

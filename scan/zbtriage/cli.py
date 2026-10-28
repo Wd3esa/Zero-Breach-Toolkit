@@ -41,7 +41,8 @@ from .result import ModuleResult
 from .banner import show_banner
 from .menu import menu_wanted, choose_scan
 from .scope import scope_arguments, scope_validate, scope_preview, scope_guide
-from .workflow import WorkflowParser, workflow_arguments, workflow_validate, workflow_check_outputs
+from .workflow import (WorkflowParser, workflow_arguments, workflow_validate,
+                       workflow_check_outputs, workflow_before_scan)
 
 
 def _force_utf8_io() -> None:
@@ -115,6 +116,9 @@ def _parse(argv: List[str]) -> argparse.Namespace:
     p.add_argument("--accept-shrink", metavar="SOURCE_ID", action="append", default=[],
                    help="with --update: accept a source whose indicator count fell by more "
                         "than half (normally refused, keeping the previous copy)")
+    p.add_argument("--latest", action="store_true",
+                   help="with --update: download each source's newest upstream version "
+                        "instead of the copy pinned and checked for this release")
     p.add_argument("--no-feeds", action="store_true",
                    help="scan with the built-in indicator set only, ignoring "
                         "downloaded sets")
@@ -177,7 +181,7 @@ def _refuse_remote(label: str, value: str) -> bool:
 
 def _run_update(args) -> int:
     """--update: an explicit network step, never part of a scan."""
-    return feeds.update_command(args.indicator_cache, args.json, args.accept_shrink)
+    return feeds.update_command(args.indicator_cache, args.json, args.accept_shrink, args.latest)
 
 
 def _main(argv: List[str] = None) -> int:
@@ -267,6 +271,7 @@ def _main(argv: List[str] = None) -> int:
             print("error: backup password requires a private interactive terminal", file=sys.stderr)
             return 1
         password = getpass.getpass("Backup password (not saved): ")
+    workflow_before_scan(args, iocs)
     ctx = ScanContext(iocs=iocs, deep=args.deep, quick=args.quick,
                       full=args.scan_type == "full", browser_only=args.scan_type == "browser",
                       targets=tuple(os.path.abspath(p) for p in args.target),

@@ -53,7 +53,8 @@ from urllib.parse import urlsplit
 
 from ..heuristics import CRADLE_GET, CRADLE_RUN, REMOTE, RUNNER
 from ..iocs import TYPE_SHA256
-from ..localpaths import path_problem, walk_local, WALK_LINK_REFUSED, WALK_SPECIAL_REFUSED
+from ..localpaths import (path_problem, walk_local, WALK_LINK_REFUSED, WALK_SPECIAL_REFUSED,
+                          WALK_CLOUD_SKIPPED)
 from ..result import (EV_ATTEMPTED, EV_COMMAND, EV_CONTACTED, EV_ON_DISK, Hit, Lead,
                       ModuleResult)
 
@@ -227,12 +228,15 @@ def _tr_check_motw(r, ctx):
         r.could_not_run("mark-of-the-web", "no Downloads, Desktop or Documents folder found")
         return
     examined, stamped, stopped, oversize = 0, 0, False, 0
-    unreadable = {"files": 0, "folders": 0, "deep": 0}
+    unreadable = {"files": 0, "folders": 0, "deep": 0, "cloud": 0}
 
     def onerror(exc):
         if getattr(exc, "strerror", None) in (WALK_LINK_REFUSED, WALK_SPECIAL_REFUSED):
             return  # links and special entries are not followed on purpose
         r.skipped += 1
+        if getattr(exc, "strerror", None) == WALK_CLOUD_SKIPPED:
+            unreadable["cloud"] += 1     # a file, not an unreadable folder
+            return
         unreadable["folders"] += 1
 
     for root in roots:
@@ -295,6 +299,10 @@ def _tr_check_motw(r, ctx):
         r.could_not_run("mark-of-the-web: unreadable", "{} file(s) and {} folder(s) could not be read, so "
                         "where those files came from was not checked".format(
                             unreadable["files"], unreadable["folders"]))
+    if unreadable["cloud"]:
+        r.could_not_run("mark-of-the-web: not downloaded", "{} file(s) stored only in iCloud or OneDrive "
+                        "and not downloaded, so where those files came from was not checked".format(
+                            unreadable["cloud"]))
     if unreadable["deep"]:
         r.could_not_run("mark-of-the-web: deep folders", "{} folder(s) more than {} levels down were not "
                         "examined".format(unreadable["deep"], _TR_MAX_DEPTH))

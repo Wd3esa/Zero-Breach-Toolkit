@@ -206,6 +206,8 @@ def build_document(iocs: IocSet, modules: List[ModuleResult],
             "families": _family_counts(iocs),
             "feeds": _feed_block(getattr(iocs, "feeds", None)),
         },
+        # Leftover temporary folders from an earlier scan that did not finish.
+        "housekeeping": _housekeeping_block(getattr(iocs, "housekeeping", None)),
         "modules": module_dicts,
         # Heuristics: never part of the verdict (result.Lead).
         "worth_a_look": [dict(lead, module=name) for name, md in module_dicts.items()
@@ -592,6 +594,13 @@ def render_human(document: Dict[str, Any]) -> str:
           "before trusting a clean result. **")
     if ioc.get("freshness_unknown"):
         w("  ** WARNING: one or more source dates are unknown; copying files does not refresh indicators. **")
+    housekeeping = document.get("housekeeping") or {}
+    if housekeeping.get("stale_temp_removed"):
+        w("Clean-up      : removed {} leftover temporary folder(s) from an earlier scan that "
+          "did not finish".format(housekeeping["stale_temp_removed"]))
+    for path in housekeeping.get("stale_temp_not_removed", []):
+        w("  ** WARNING: a leftover temporary folder from an earlier scan could not be removed "
+          "and may hold private copies. Delete it yourself: {} **".format(path))
     w("")
 
     # Put the full indicator evidence after the coverage/DNS-history instructions.
@@ -922,6 +931,10 @@ TIER_MEANING = {
     "candiru-ip": ("An IP address attributed to Candiru infrastructure in 2025. "
                    "Weak on its own: cloud IP addresses are reassigned to "
                    "unrelated, innocent customers within months."),
+    "reclaimable": ("A name from a published campaign that may since have passed to "
+                    "someone else: a hostname on a shared cloud platform, or a domain "
+                    "registered again after the report. A match is a lead to check "
+                    "against the date, not a finding by itself."),
     "historical": ("Infrastructure from separate, older Candiru campaigns. "
                    "Interpret dated evidence in the cited report's context; "
                    "current ownership and activity are not established."),
@@ -1037,6 +1050,8 @@ def _headline_for(hit) -> str:
         return "A FILE FINGERPRINT MATCHED; ITS CLASSIFICATION NEEDS REVIEW"
     if hit.get("tier") in DECAYING_IP_TIERS and hit.get("evidence") == EV_CONTACTED:
         return "THIS DEVICE CONTACTED A HISTORICALLY ATTRIBUTED IP ADDRESS"
+    if hit.get("tier") == "reclaimable" and hit.get("evidence") == EV_CONTACTED:
+        return "THIS DEVICE CONTACTED A NAME THAT MAY HAVE CHANGED OWNER SINCE THE REPORT"
     return EVIDENCE_HEADLINE.get(hit.get("evidence"), "A SERIOUS INDICATOR MATCHED")
 
 
@@ -1051,6 +1066,9 @@ def _evidence_gloss(hit) -> str:
     if hit.get("tier") in DECAYING_IP_TIERS and hit.get("evidence") == EV_CONTACTED:
         return ("a connection record names this IP address; who controlled it "
                 "at the time is not established by this match")
+    if hit.get("tier") == "reclaimable" and hit.get("evidence") == EV_CONTACTED:
+        return ("a connection record names this host; it may belong to someone "
+                "else now, so only a record dated to the campaign period matters")
     return EVIDENCE_MEANING.get(hit.get("evidence") or "", "")
 
 
@@ -1221,7 +1239,7 @@ def _recommended_action(hit) -> int:
         return 1
     if evidence in (EV_ON_DISK, EV_PERSISTENCE, EV_ON_DEVICE):
         return 3
-    if ((tier == "delivery" or tier in DECAYING_IP_TIERS) and
+    if ((tier in ("delivery", "reclaimable") or tier in DECAYING_IP_TIERS) and
             evidence in (EV_CONTACTED, EV_DNS, EV_ATTEMPTED, EV_CONFIGURED)):
         return 1
     return 2
@@ -1625,6 +1643,12 @@ def _basename(path: str) -> str:
     """Last path component for either separator. Reports are read on other
     machines, so a Windows path must shorten correctly on Linux too."""
     return str(path).replace("\\", "/").rsplit("/", 1)[-1]
+
+
+def _housekeeping_block(status):
+    status = status or {}
+    return {"stale_temp_removed": int(status.get("removed", 0)),
+            "stale_temp_not_removed": [sanitize_untrusted(p) for p in status.get("failed", [])]}
 
 
 def _feed_block(status):

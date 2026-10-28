@@ -266,6 +266,32 @@ def _ia_artifact_kind(domain, path, kind):
     return ""
 
 
+def _ia_ips_field(line, names):
+    """The value of a "Name:  value" header line, or "" (plain string handling:
+    the regular expressions this replaced backtracked quadratically on long
+    runs of spaces in crafted reports)."""
+    for name in names:
+        if line.startswith(name + ":"):
+            rest = line[len(name) + 1:]
+            return rest.strip() if rest[:1].isspace() else ""
+    return ""
+
+
+def _ia_ips_process(line):
+    """Process or Command name, without a trailing " [pid]"."""
+    value = _ia_ips_field(line, ("Process", "Command"))
+    if value.endswith("]"):
+        head, _sep, pid = value.rpartition("[")
+        if pid[:-1].isdecimal() and head and head != head.rstrip():
+            value = head.rstrip()
+    return value
+
+
+def _ia_ips_path(line):
+    value = _ia_ips_field(line, ("Path",))
+    return value if len(value) > 1 and value[0] == "/" and not value[1].isspace() else ""
+
+
 def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, records, hit, apple_time):
     """Parse selected input artifacts, retaining each readable neighbour on error."""
     processed = 0
@@ -775,18 +801,20 @@ def ios_additional_artifacts(source, ctx, r, gap, query, tables, columns, record
             if len(lines) > _IA_LINE_LIMIT:
                 gap(check, "diagnostic report longer than {:,} lines; the rest was not searched".format(_IA_LINE_LIMIT))
             for line_no, line in enumerate(lines[:_IA_LINE_LIMIT], 1):
+                if time.monotonic() > deadline:
+                    gap(check, "time limit reached in a diagnostic report; the rest was not searched")
+                    break
                 if len(line) > 65536:
                     gap(check, "oversized diagnostic record was not searched")
                     continue
                 text_matches(line, key, check, line_no, "text in a diagnostic report; execution unverified")
-                match = re.fullmatch(r"(?:Process|Command):\s+(.+?)(?:\s+\[\d+\])?\s*", line)
-                path = re.fullmatch(r"Path:\s+(/\S.*?)\s*", line)
-                if match:
+                process, path = _ia_ips_process(line), _ia_ips_path(line)
+                if process:
                     found += 1
-                    process_name(match.group(1), key, check, line_no, detail, _ia_iso(when), when)
+                    process_name(process, key, check, line_no, detail, _ia_iso(when), when)
                 elif path:
                     found += 1
-                    typed(path.group(1), ("file-path",), key, check, line_no, detail, EV_DEVICE_LOG,
+                    typed(path, ("file-path",), key, check, line_no, detail, EV_DEVICE_LOG,
                           _ia_iso(when), when)
         if binary_body and bug_type in ("109", "309"):
             raise ValueError("crash report body is not text and was not read")

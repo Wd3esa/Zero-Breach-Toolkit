@@ -212,7 +212,7 @@ A('  Optional Candiru rules retain their separate DRL 1.1 / CC BY-SA 4.0')
 A('  licences and author credits, embedded below with their provenance.')
 A('  Copyright 2026 archivegenocide.com. Provided AS IS, without warranty.')
 A('  Full text, and the sources every indicator came from:')
-A('    https://github.com/interplains/zero-breach')
+A('    https://github.com/interplains/Zero-Breach-Toolkit')
 A('  NOT affiliated with, and NOT endorsed by, The Citizen Lab, Confiant,')
 A('  Recorded Future, Amnesty International or Access Now.')
 A('')
@@ -390,6 +390,9 @@ def _bundle_main(argv=None):
     p.add_argument("--accept-shrink", metavar="SOURCE_ID", action="append", default=[],
                    help="with --update: accept a source whose indicator count fell by more "
                         "than half (normally refused, keeping the previous copy)")
+    p.add_argument("--latest", action="store_true",
+                   help="with --update: download each source's newest upstream version "
+                        "instead of the copy pinned and checked for this release")
     p.add_argument("--no-feeds", action="store_true",
                    help="scan with the embedded indicator set only")
     p.add_argument("--phone", metavar="FOLDER",
@@ -457,7 +460,7 @@ def _bundle_main(argv=None):
             print("error: --json must be a path on a local disk", file=sys.stderr)
             _hold(args)
             return 1
-        code = update_command(args.indicator_cache, args.json, args.accept_shrink)
+        code = update_command(args.indicator_cache, args.json, args.accept_shrink, args.latest)
         _hold(args)
         return code
 
@@ -520,6 +523,7 @@ def _bundle_main(argv=None):
             print("error: backup password requires a private interactive terminal", file=sys.stderr)
             return 1
         password = getpass.getpass("Backup password (not saved): ")
+    workflow_before_scan(args, ioc_set)
     ctx = ScanContext(iocs=ioc_set, quick=args.quick, patterns=args.patterns,
                       full=args.scan_type == "full", browser_only=args.scan_type == "browser",
                       targets=tuple(os.path.abspath(p) for p in args.target),

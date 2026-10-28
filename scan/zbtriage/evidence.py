@@ -96,6 +96,9 @@ def evidence_enrich(module_dicts, iocs):
                     cautions.append("IP addresses can be reassigned or shared; a match does not establish who operated the endpoint at the time.")
                 if ind.tier == "historical":
                     cautions.append("Historical campaign indicator; present-day malicious use is not established.")
+                if ind.tier == "reclaimable":
+                    cautions.append("This name may have passed to someone else since the report; only a match "
+                                    "dated to the campaign period is meaningful.")
             hit["indicator_context"] = contexts
             hit["context_cautions"] = list(dict.fromkeys(cautions))
             hit["withdrawn_only"] = _withdrawn_only(all_records)

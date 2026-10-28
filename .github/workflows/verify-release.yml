@@ -1,0 +1,48 @@
+name: verify-release
+
+# Rebuilds the single file from the release tag on a clean GitHub machine and
+# compares it with the SHA-256 published in the release's signed SHA256SUMS.txt,
+# so a release can be checked without trusting the machine that built it.
+# Read-only: no secrets beyond the default token, nothing is published.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "release tag to verify, for example v0.1.6"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Rebuild from the tag
+        run: python build/bundle.py . rebuilt.py
+
+      - name: Compare with the published checksum
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS.txt --dir published
+          expected=$(awk '$2 == "zero-breach-toolkit.py" {print $1}' published/SHA256SUMS.txt)
+          actual=$(sha256sum rebuilt.py | cut -d' ' -f1)
+          echo "published SHA-256: $expected"
+          echo "rebuilt   SHA-256: $actual"
+          test -n "$expected"
+          test "$expected" = "$actual"
+          echo "The release file is exactly what the tagged source builds."

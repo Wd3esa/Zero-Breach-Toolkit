@@ -13,7 +13,7 @@ import stat as _pattern_stat
 import sys as _pattern_sys
 
 from ..result import Hit, ModuleResult
-from ..localpaths import path_problem
+from ..localpaths import path_problem, cloud_placeholder
 from ..candiru_rules import (CANDIRU_ENGINE_VERSION, CANDIRU_RULE_SOURCES,
                             CANDIRU_RULE_METADATA)
 from .hashscan import _roots as _pattern_roots
@@ -82,7 +82,8 @@ def _pattern_walk(root, counts, r, onerror, depth=0):
                 try:
                     info = entry.stat(follow_symlinks=False)
                     if (_pattern_stat.S_ISLNK(info.st_mode)
-                            or getattr(info, "st_file_attributes", 0) & 0x400):
+                            or (getattr(info, "st_file_attributes", 0) & 0x400
+                                and not cloud_placeholder(info))):
                         raise OSError("symlink or reparse point was not followed")
                     if getattr(info, "st_file_attributes", 0) & _PATTERN_CLOUD_ATTRIBUTES:
                         raise OSError("offline or cloud-recall path was not opened")

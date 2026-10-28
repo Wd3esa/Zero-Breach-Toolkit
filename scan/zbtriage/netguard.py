@@ -16,8 +16,10 @@ already-cached entry resolves nothing.
 
 The indicator update (--update, in feeds.py) is the one explicitly invoked
 network operation; it runs outside this guard, only from an allow-list of official
-sources, and records each file's SHA-256 so later changes are refused. Sources are
-not signed by their publishers, so there is no signature to verify.
+sources. By default it downloads each source at the commit pinned for this release
+and requires the SHA-256 the release recorded for it; it also records each file's
+SHA-256 in the cache, which detects accidental changes. Sources are not signed by
+their publishers, so there is no signature to verify.
 """
 
 from __future__ import annotations

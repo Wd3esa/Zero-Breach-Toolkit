@@ -70,6 +70,9 @@ a crisis helpline.
   fourth column.
 - **No IP addresses from old reporting.** Cloud IPs get reassigned to innocent tenants, so
   an undated IP match is noise. The existing `candiru-ip` tier carries this caveat.
+- **Names that can change owner go in `reclaimable`:** hostnames on shared cloud platforms
+  (`*.herokuapp.com`, `*.cloudapp.azure.com`) and domains registered again after their
+  report. Check registry (RDAP) records, never the domain itself.
 - **Hashes must be SHA-256.** The scanner computes SHA-256; a SHA-1 would be misread as a
   domain.
 - **Update the `# as-of:` date** in the indicator file header when you change the set, and

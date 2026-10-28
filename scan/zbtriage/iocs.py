@@ -4,7 +4,8 @@ Data contract (SPEC-scanner.md, matching iocs/adfection_iocs.txt):
 
     indicator <TAB> tier <TAB> confidence
 
-  tier       = cc | validator | delivery | historical | sample
+  tier       = cc | validator | delivery | historical | reclaimable | sample | ...
+               (the full list, with what each means, is VALID_TIERS below)
   confidence = primary | secondary
 
 `#` lines are comments. The schema deliberately carries more than AdFection: the
@@ -20,6 +21,7 @@ Indicator *type* is inferred from shape, not stored, so the file stays 3 columns
 
 from __future__ import annotations
 
+import bisect
 import io
 import json
 import os
@@ -38,6 +40,12 @@ VALID_TIERS = {
     "validator",    # Candiru validator / target-selection servers
     "delivery",     # Discover-Tech / Controlium ad infrastructure
     "historical",   # older, separate Candiru campaigns
+    # A published name that may have passed to someone else since: a hostname
+    # on a shared cloud platform (Azure cloudapp, Heroku), which the platform
+    # hands to the next customer, or a domain that registry records show was
+    # registered again after the report. Contact with it is a lead, never a
+    # finding by itself; only a match dated to the campaign period means much.
+    "reclaimable",
     "sample",       # file hashes of the spyware itself
     # A legitimate, signed third-party driver or utility that this actor abuses
     # (bring-your-own-vulnerable-driver). The file is NOT spyware: it ships with
@@ -258,6 +266,118 @@ def _boundaries_ok(hay, needle, ind_type: str) -> bool:
     return bool(_positions(hay, needle, ind_type, display))
 
 
+# An IPv6-shaped run: hex groups and colons, not part of a longer hex/colon run,
+# and not the start of an embedded IPv4 tail.
+_IP6_CANDIDATE = re.compile(
+    r"(?<![0-9a-f:.])[0-9a-f]{0,4}(?::[0-9a-f]{0,4}){2,7}(?![0-9a-f:]|\.[0-9])")
+
+# Escapes that hide a host inside a URL. Matching runs on lower-cased text, so
+# the hex digits are lower case here.
+_PCT_STR = re.compile(r"%([0-9a-f]{2})")
+_JS_STR = re.compile(r"\\(?:x([0-9a-f]{2})|u00([0-9a-f]{2})|(/))")
+_PCT_BYTES = re.compile(rb"%([0-9a-f]{2})")
+_JS_BYTES = re.compile(rb"\\(?:x([0-9a-f]{2})|u00([0-9a-f]{2})|(/))")
+# Four or more UTF-16LE printable characters in a row.
+_WIDE_RUN = re.compile(rb"(?:[\x20-\x7e]\x00){4,}")
+
+
+def _printable(hex2):
+    value = int(hex2, 16)
+    return chr(value).lower() if 0x21 <= value <= 0x7e else None
+
+
+def _unescape_str(text):
+    for _ in range(2):          # twice: %252f is %2f is /
+        text = _PCT_STR.sub(lambda m: _printable(m.group(1)) or m.group(0), text)
+    return _JS_STR.sub(lambda m: "/" if m.group(3) else
+                       (_printable(m.group(1) or m.group(2)) or m.group(0)), text)
+
+
+def _narrow_wide_runs(data):
+    """UTF-16LE text runs rewritten as single-byte text (other bytes kept)."""
+    if b"\x00" not in data:
+        return data
+    return _WIDE_RUN.sub(lambda m: m.group(0)[::2], data)
+
+
+# One escape that can hide part of a name, and the characters a name (or the
+# URL text around it, or an IPv6 address) can continue through.
+_ESCAPE_AT = re.compile(r"%[0-9a-f]{2}|\\(?:x[0-9a-f]{2}|u00[0-9a-f]{2}|/)")
+_WINDOW_CHARS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789-_.%\\:/")
+
+
+def _escaped_windows(text):
+    """(decoded stretches of `text` around its escapes joined by newlines, and
+    their (start, end) spans in `text`), or None when no escape decodes to
+    anything.
+
+    Each stretch is widened to the nearest character a name cannot continue
+    through, on both sides, so its edges are boundaries exactly as they are in
+    the full text: searching the stretches finds what searching the whole
+    decoded text would, without decoding or searching everything again."""
+    parts, spans = [], []
+    covered = 0
+    n = len(text)
+    for m in _ESCAPE_AT.finditer(text):
+        if m.start() < covered:
+            continue
+        start, end = m.start(), m.end()
+        while start > 0 and text[start - 1] in _WINDOW_CHARS:
+            start -= 1
+        while end < n and text[end] in _WINDOW_CHARS:
+            end += 1
+        covered = end
+        window = text[start:end]
+        decoded = _unescape_str(window)
+        if decoded != window:
+            parts.append(decoded)
+            spans.append((start, end))
+    return ("\n".join(parts), spans) if parts else None
+
+
+def _decoded_view(hay):
+    """(view, spans, text) for the decoded stretches around percent and JS
+    escapes (see _escaped_windows), or None when there are none: `view` is
+    searched like the haystack, and `spans` are positions in `text`, the
+    haystack as single-byte text. UTF-16LE runs are narrowed first so escapes
+    stored as UTF-16 (Chromium storage) are decoded too."""
+    if isinstance(hay, str):
+        if "%" not in hay and "\\" not in hay:
+            return None
+        found = _escaped_windows(hay)
+        return None if found is None else (found[0], found[1], hay)
+    if b"%" not in hay and b"\\" not in hay:
+        return None
+    src = hay
+    if b"%\x00" in hay or b"\\\x00" in hay:
+        src = _narrow_wide_runs(hay)
+    text = src.decode("latin-1")
+    found = _escaped_windows(text)
+    return None if found is None else (found[0].encode("latin-1"), found[1], text)
+
+
+def _merge_views(main, extra, spans, text):
+    """Union of the original and decoded-view results, original order first.
+
+    A parent domain the original matched is dropped when the decoded stretches
+    show a more specific name for it and every place the parent occurs in the
+    original lies inside an escaped stretch (it was only that name's tail)."""
+    if not extra:
+        return main
+    extra_values = {i.value for i in extra}
+    out = []
+    for ind in main:
+        if (ind.type == TYPE_DOMAIN and ind.value not in extra_values and
+                any(v.endswith("." + ind.value) for v in extra_values)):
+            places = _positions(text, ind.value, TYPE_DOMAIN, ind.value)
+            if all(any(a <= p < b for a, b in spans) for p in places):
+                continue
+        out.append(ind)
+    have = {i.value for i in out}
+    out += [i for i in extra if i.value not in have]
+    return out
+
+
 def _prune_parents(found, hay) -> list:
     """Drop a parent domain whose every occurrence is just the tail of a matched
     child. "noas.powerium.net" in a cookie also contains "powerium.net", and both
@@ -437,6 +557,13 @@ class IocSet:
             self._ip4 = {i.value: i for i in all_ips if self._IP4_VALUE.match(i.value)}
             # IPv6 and anything unusual keep the per-indicator loop (a handful).
             ips = [i for i in all_ips if i.value not in self._ip4]
+            # IPv6 by canonical form, so 2001:db8:0:0::1 finds 2001:db8::1.
+            self._ip6 = {}
+            for i in ips:
+                try:
+                    self._ip6.setdefault(ipaddress.IPv6Address(i.value).compressed, i)
+                except ValueError:
+                    pass
             max_labels = max((v.count(".") + 1 for v in doms), default=0)
             max_len = max((len(v) for v in doms), default=0)
             order = {i.value: n for n, i in enumerate(self._net_indicators)}
@@ -466,20 +593,26 @@ class IocSet:
             last = token.rfind(".", 0, end)
             if last < 0 or token[last + 1:end] not in tlds:
                 continue
-            starts = [d + 1 for d in dots if d + 1 < end]
+            # Starts are tried nearest-first: after each dot before `end`, then
+            # the token start. Only max_labels of them can ever match, so a
+            # crafted token full of dots stays linear (it was quadratic when
+            # every start was listed for every end).
+            i = bisect.bisect_left(dots, end - 1) - 1
             labels = 0
-            for start in reversed([0] + starts):
+            while True:
+                start = dots[i] + 1 if i >= 0 else 0
                 labels += 1
                 if labels > max_labels or end - start > max_len:
                     break
-                if start >= end:
-                    continue
-                ind = doms.get(token[start:end])
-                if ind is None:
-                    continue
-                idx = base + start * unit
-                if _valid_at(hay, idx, (end - start) * unit, ind.type, ind.value, wide):
-                    occ.setdefault(ind.value, []).append((enc, idx))
+                if start < end:
+                    ind = doms.get(token[start:end])
+                    idx = base + start * unit
+                    if ind is not None and _valid_at(hay, idx, (end - start) * unit,
+                                                     ind.type, ind.value, wide):
+                        occ.setdefault(ind.value, []).append((enc, idx))
+                if i < 0:
+                    break
+                i -= 1
 
     def _ordered(self, occ: Dict[str, list]) -> list:
         """(indicator, occurrences) in the same order the reference loop used."""
@@ -488,7 +621,13 @@ class IocSet:
                 for v, o in sorted(occ.items(), key=lambda kv: order[kv[0]])]
 
     def search(self, haystack_lower: str) -> List[Indicator]:
-        """Indicators genuinely present in the text, with type-aware boundaries."""
+        """Indicators genuinely present in the text, with type-aware boundaries.
+
+        Also searches a decoded copy when the text holds percent or JS escapes,
+        and finds IPv6 addresses written in any equivalent form."""
+        return self._with_views(haystack_lower, self._search_plain)
+
+    def _search_plain(self, haystack_lower: str) -> List[Indicator]:
         doms, ips, _ml, _mx, _o = self._index()
         occ: Dict[str, list] = {}
         if doms:
@@ -511,7 +650,11 @@ class IocSet:
         return _prune_parents(self._ordered(occ), haystack_lower)
 
     def search_bytes(self, haystack_lower: bytes) -> List[Indicator]:
-        """As search(), for raw binary artifacts (HTTP cache, LevelDB).
+        """As search(), for raw binary artifacts (HTTP cache, LevelDB)."""
+        return self._with_views(haystack_lower, self._search_bytes_plain)
+
+    def _search_bytes_plain(self, haystack_lower: bytes) -> List[Indicator]:
+        """The single-view byte search.
 
         Searches both single-byte text and UTF-16LE, because Chromium's storage
         and many Windows artifacts keep strings as UTF-16 - "c\\0o\\0n\\0..." -
@@ -564,6 +707,12 @@ class IocSet:
     # --- reference implementation (the pre-2026-10-25 loops), for tests ------
 
     def _search_reference(self, haystack_lower: str) -> List[Indicator]:
+        return self._with_views(haystack_lower, self._search_reference_plain)
+
+    def _search_bytes_reference(self, haystack_lower: bytes) -> List[Indicator]:
+        return self._with_views(haystack_lower, self._search_bytes_reference_plain)
+
+    def _search_reference_plain(self, haystack_lower: str) -> List[Indicator]:
         found = []
         for ind in self._net_indicators:
             if ind.value in haystack_lower:
@@ -572,7 +721,7 @@ class IocSet:
                     found.append((ind, [("str", p) for p in pos]))
         return _prune_parents(found, haystack_lower)
 
-    def _search_bytes_reference(self, haystack_lower: bytes) -> List[Indicator]:
+    def _search_bytes_reference_plain(self, haystack_lower: bytes) -> List[Indicator]:
         found = []
         for ind in self._net_indicators:
             occ = []
@@ -587,6 +736,48 @@ class IocSet:
             if occ:
                 found.append((ind, occ))
         return _prune_parents(found, haystack_lower)
+
+    def _with_views(self, hay, plain):
+        """Run one single-view search over the text and its decoded copy.
+
+        Ad-click and redirect URLs carry their destination escaped
+        ("u=https%3a%2f%2fevil.com", "https:\\/\\/evil.com"), where the escape
+        letters sit against the name and hide it from the boundary rule. The
+        decoded copy is searched too and the results merged. A parent domain the
+        original only matched as the tail of a more specific escaped name is
+        dropped, as _prune_parents does within one view."""
+        found = plain(hay)
+        decoded = _decoded_view(hay)
+        if decoded is not None:
+            view, spans, text = decoded
+            found = _merge_views(found, plain(view), spans, text)
+        if self._index() and self._ip6:
+            have = {i.value for i in found}
+            for view in (hay,) if decoded is None else (hay, decoded[0]):
+                for ind in self._ip6_hits(view):
+                    if ind.value not in have:
+                        have.add(ind.value)
+                        found.append(ind)
+        return found
+
+    def _ip6_hits(self, hay):
+        """IPv6 indicators present in any written form (compressed, expanded,
+        leading zeros), with the same boundary rule as every other IP."""
+        if isinstance(hay, bytes):
+            if b":" not in hay:
+                return []
+            hay = _narrow_wide_runs(hay).decode("latin-1")
+        elif ":" not in hay:
+            return []
+        out = []
+        for m in _IP6_CANDIDATE.finditer(hay):
+            try:
+                ind = self._ip6.get(ipaddress.IPv6Address(m.group(0)).compressed)
+            except ValueError:
+                continue
+            if ind is not None and ind not in out:
+                out.append(ind)
+        return out
 
     def _needles(self, ind: Indicator):
         cache = self._needle_cache

@@ -209,7 +209,23 @@ def _sha256(full):
     size = info.st_size
     h = hashlib.sha256()
     read_bytes = 0
-    with io.open(full, "rb") as fh:
+    # Opened without following a link and without blocking, then checked to be
+    # the same regular file: a FIFO swapped in after the stat (in /tmp, say)
+    # cannot hold a worker thread forever. The same rule as patternscan.
+    flags = (os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+             | getattr(os, "O_NONBLOCK", 0))
+    fd = os.open(full, flags)
+    try:
+        fh = io.open(fd, "rb", closefd=True)
+    except Exception:
+        os.close(fd)
+        raise
+    with fh:
+        opened = os.fstat(fh.fileno())
+        if (not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino)):
+            raise OSError("file changed before it was read")
+        if hasattr(os, "O_NONBLOCK") and hasattr(os, "get_blocking"):
+            os.set_blocking(fh.fileno(), True)
         while True:
             chunk = fh.read(1024 * 1024)
             if not chunk:

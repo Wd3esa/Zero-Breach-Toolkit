@@ -119,6 +119,7 @@ READER_SPECS = (
             "mark-of-the-web: remaining files": "files beyond the examination cap",
             "mark-of-the-web: unreadable": "files and folders whose download origin could not be read",
             "mark-of-the-web: deep folders": "folders below the depth limit",
+            "mark-of-the-web: not downloaded": "files stored only in iCloud or OneDrive, not downloaded",
             "run-history": "commands typed into Win+R (where fake 'verify you are "
                            "human' pages tell people to paste)",
             "antivirus-status": "current registered antivirus product and update status reported by Windows Security Center; not an independent protection test",

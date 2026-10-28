@@ -69,6 +69,26 @@ def build(out_dir):
     os.remove(second)
 
 
+def git(*args):
+    return subprocess.run(["git"] + list(args), cwd=ROOT, check=True, capture_output=True,
+                          text=True).stdout.strip()
+
+
+def refuse_unless_releasable(tag):
+    """The build reads the working tree, so it must be exactly a pushed commit:
+    no uncommitted changes, HEAD on origin/main, and the version tag (if it
+    already exists) on HEAD."""
+    if git("status", "--porcelain"):
+        raise SystemExit("refusing to build a release: the working tree has uncommitted changes")
+    head = git("rev-parse", "HEAD")
+    git("fetch", "--quiet", "origin", "main")
+    if subprocess.run(["git", "merge-base", "--is-ancestor", "HEAD", "origin/main"],
+                      cwd=ROOT).returncode != 0:
+        raise SystemExit("refusing to build a release: HEAD is not on origin/main")
+    if git("tag", "--list", tag) and git("rev-list", "-n", "1", tag) != head:
+        raise SystemExit("refusing to build a release: tag {} is not on HEAD".format(tag))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--no-sign", action="store_true", help="build and checksum only")
@@ -76,6 +96,7 @@ def main():
     parser.add_argument("--gnupg-home", help="keyring holding the signing key (default: gpg's own)")
     args = parser.parse_args()
 
+    refuse_unless_releasable("v" + version())
     out = os.path.join(ROOT, "release", "v" + version())
     if os.path.exists(out):
         raise SystemExit("{} already exists; remove it deliberately before rebuilding".format(out))

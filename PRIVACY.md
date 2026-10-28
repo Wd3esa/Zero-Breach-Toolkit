@@ -23,8 +23,11 @@ Zero Breach Toolkit runs entirely on your computer.
   address (`https://archivegenocide.com/scan/`) to your default browser, and the browser
   loads it like any other site. The tool itself makes no request and passes the page
   nothing about you, this computer or any scan result.
-- **The report is written to a local path you choose.** It can contain your username, browser
-  profile names, paths, browsing details, SMS senders and message excerpts. Share full evidence
+- **The report is written to a local path you choose.** The launchers save it in a
+  `findings` folder next to the toolkit; if that folder is inside OneDrive or iCloud, the
+  scanner says so before the check starts, because the sync client would upload it. The
+  report can contain your username, browser profile names, paths, browsing details, SMS
+  senders and message excerpts. Share full evidence
   only with someone you trust, by a secure route. Avoid cloud-synced output folders if you want
   to keep it solely on the device; this tool does not control other software's syncing.
 - **`--share-json PATH` writes a minimal sharing summary.** It contains counts, scope labels, verdict and fixed

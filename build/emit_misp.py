@@ -123,6 +123,7 @@ MISP_CATEGORY = {
     "validator": "Network activity",
     "delivery": "Network activity",
     "historical": "Network activity",
+    "reclaimable": "Network activity",
     "sample": "Payload delivery",
     # Legitimate signed software this actor abuses: a file artifact found on a
     # host, not a payload this campaign delivers.

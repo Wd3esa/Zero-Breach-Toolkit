@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased
+
+Detection
+- Hosts hidden by URL escapes are found: percent-encoded (also double-encoded) and
+  JavaScript-escaped addresses such as `u=https%3A%2F%2Fexample.com` or
+  `https:\/\/example.com`, common in ad-click links and browser storage.
+- IPv6 indicators match however the address is written (compressed, expanded, leading
+  zeros, upper case).
+- Linux: the program a systemd unit or crontab line runs is read like a desktop entry's
+  `Exec=`, so a published implant path there is graded "configured" (activation
+  unverified) instead of a mere reference.
+- OneDrive files kept on this device, and OneDrive folders, are now checked; they were
+  skipped as links. Files that would need downloading are still listed as not checked.
+- Names that may have changed owner since their report are a lead, not a serious finding:
+  shared cloud-platform hostnames, and 21 historical domains that registry records show
+  were registered again after publication (registry lookups only). They are also left
+  out of the blocklists.
+
+Robustness
+- Crafted evidence can no longer stall a scan: domain matching is linear on long dotted
+  tokens, iPhone diagnostic report lines are parsed without backtracking and stop at the
+  time limit, and the file-fingerprint check cannot block on a FIFO swapped in for a file.
+
+Privacy
+- Temporary copies left by a scan that was killed or crashed are removed at the next
+  start (only the tool's own folders, older than 12 hours); the report says if any could
+  not be removed.
+- The scanner says so when a report is about to be saved in a folder that OneDrive or
+  iCloud uploads.
+
+Indicator updates
+- `--update` downloads each source at the commit pinned for this release and requires
+  the SHA-256 the release records for it. `--update --latest` follows the upstream branch.
+  The report records which revision each source came from.
+- The shrink guard compares with the highest count a source has had, so repeated smaller
+  drops cannot empty it.
+
+Release process
+- `tools/make_release.py` refuses a dirty working tree, a commit not on origin/main, or a
+  version tag on another commit. CI checks the generated files are current, and a new
+  workflow rebuilds each published release from its tag and compares the checksum.
+
 ## 0.1.5 (2026-10-28)
 
 Fewer stalls and false alarms

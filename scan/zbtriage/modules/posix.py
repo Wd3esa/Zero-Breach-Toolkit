@@ -250,8 +250,60 @@ def _ux_fields(data, kind):
         limitation = "unsupported desktop Exec syntax retained as references" if command and not program else ""
         return text, [program] if enabled and program else [], limitation
     # Unit activation, masking, drop-ins and variable expansion are deliberately
-    # not resolved. Unit and cron text therefore supports references only.
+    # not resolved. The program a unit or crontab line runs is read literally
+    # (_ux_commands): a published path there is graded configured, with
+    # activation unverified. Its arguments, network names included, stay
+    # references, as for desktop entries and launch items.
+    if kind in _UX_COMMAND_KINDS:
+        return text, [program for _command, program in _ux_commands(text, kind) if program], ""
     return text, [], ""
+
+
+# Kinds whose lines name commands to run: systemd units and crontabs.
+_UX_COMMAND_KINDS = {"unit", "cron", "cron-file", "user-cron"}
+_UX_UNIT_EXEC = re.compile(r"Exec(?:Start|StartPre|StartPost|Reload|Stop|StopPost)[ \t]*=[ \t]*(.*)")
+_UX_ENV_LINE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*[ \t]*=")
+# A literal absolute path as the first word, quoted or bare, with nothing that
+# needs shell or specifier expansion inside it.
+_UX_FIRST_PATH = re.compile(r'''(?:"(/[^"\\$`%\r\n]*)"|(/[^\s"'\\$`%;|&<>()*?#]+))(?=$|[\s;|&<>])''')
+
+
+def _ux_first_path(command):
+    m = _UX_FIRST_PATH.match(command.strip())
+    return (m.group(1) or m.group(2)) if m else ""
+
+
+def _ux_commands(text, kind):
+    """(command, literal program path or "") for each command a unit or crontab
+    line runs. Only [Service] Exec lines in units; in crontabs every schedule
+    line after its time fields (and the user field in system crontabs)."""
+    out = []
+    if kind == "unit":
+        section = ""
+        for line in text.splitlines():
+            line = line.strip()
+            if line.startswith("[") and line.endswith("]"):
+                section = line
+                continue
+            m = _UX_UNIT_EXEC.fullmatch(line) if section == "[Service]" else None
+            if not m or m.group(1).endswith("\\"):
+                continue        # continued lines are not resolved
+            command = m.group(1).lstrip("-@:+!|")   # systemd command prefixes
+            out.append((command, _ux_first_path(command)))
+        return out
+    with_user = kind in ("cron", "cron-file")
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or _UX_ENV_LINE.match(line):
+            continue
+        fields = (1 if line.startswith("@") else 5) + (1 if with_user else 0)
+        parts = line.split(None, fields)
+        if len(parts) <= fields:
+            continue
+        # An unescaped % ends the command (the rest is standard input).
+        command = re.split(r"(?<!\\)%", parts[fields], 1)[0]
+        out.append((command, _ux_first_path(command)))
+    return out
 
 
 def _ux_case_values(ind):

@@ -11,7 +11,7 @@ import sys
 import tempfile
 
 from .contract import sanitize_untrusted
-from .localpaths import path_problem
+from .localpaths import path_problem, sweep_stale_temp, synced_folder
 
 
 class WorkflowParser(argparse.ArgumentParser):
@@ -159,6 +159,32 @@ def workflow_output_guard(args, path, document=None):
                 inside = False
             if inside:
                 raise ValueError("an output cannot replace an existing file inside the selected evidence folder; choose a new filename")
+
+
+def workflow_before_scan(args, iocs):
+    """Privacy housekeeping just before a scan starts, for both entry points.
+
+    Removes private temporary copies an earlier scan left behind when it was
+    killed or crashed (recorded on `iocs.housekeeping` for the report), and
+    says when a report is about to be saved in a folder that OneDrive or
+    iCloud uploads (often a Desktop or Documents folder)."""
+    iocs.housekeeping = sweep_stale_temp()
+    if iocs.housekeeping["removed"]:
+        print("Removed {} leftover temporary folder(s) from an earlier scan that did not "
+              "finish.".format(iocs.housekeeping["removed"]), file=sys.stderr)
+    for path in iocs.housekeeping["failed"]:
+        print("WARNING: could not remove a leftover temporary folder from an earlier scan; it "
+              "may hold private copies. Delete it yourself: {}".format(path), file=sys.stderr)
+    for key in ("report", "json", "share_json", "evidence_bundle"):
+        path = getattr(args, key, None)
+        folder = synced_folder(path) if path else ""
+        if folder:
+            print("NOTE: the report will be saved in {}, inside {}, which is synced to the "
+                  "cloud. Reports hold private details (user name, file paths, browsing "
+                  "records). To keep them on this computer only, move the toolkit folder "
+                  "outside it (for example to Downloads) and run it again.".format(
+                      os.path.dirname(os.path.abspath(path)), folder), file=sys.stderr)
+            break
 
 
 def workflow_check_outputs(args, document=None):

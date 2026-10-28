@@ -10,11 +10,16 @@ source at the user's request (as MVT itself does) rather than redistributed.
 Safety rules, each enforced in code and pinned by tests/test_feeds.py:
   - only https://raw.githubusercontent.com/<allow-listed owner>/... ; a redirect
     anywhere else is refused;
+  - by default each source is downloaded at the commit pinned for this release
+    (FEED_PINS), and must match the SHA-256 this release recorded for it
+    (FEED_FILE_SHA256); `--update --latest` follows the upstream branch instead;
   - every download is size-capped, must not be an HTML page, and must parse
     into at least one usable indicator BEFORE it replaces the cached copy - a
     failed download keeps the previous good copy;
   - the SHA-256 of every cached file is recorded in a manifest and re-checked
-    when a scan loads it, so an edited or corrupted cache file is refused;
+    when a scan loads it. That detects accidental corruption; it cannot stop
+    someone able to edit both the file and the manifest. A file from a pinned
+    download is also compared with the hash recorded in the release itself;
   - an indicator is never resolved or contacted: these are text files.
 """
 
@@ -52,8 +57,61 @@ TIMEOUT_S = 60
 
 def _src(sid, name, owner_repo_branch, path, fmt, cite, category="mercenary",
          family=""):
+    owner, repo, _branch = owner_repo_branch.strip("/").split("/")
     return {"id": sid, "name": name, "url": RAW + owner_repo_branch + path,
+            "repo": owner + "/" + repo, "path": path,
             "format": fmt, "cite": cite, "category": category, "family": family}
+
+
+# --- pinned revisions: written by tools/pin_feeds.py --------------------------
+# Each source repository at a reviewed commit, and the SHA-256 of every source
+# file at that commit. Bumped in a release after the upstream changes are read.
+FEED_PINS = {
+    "AmnestyTech/investigations": "3d8f248a0d015f183724ae7d096a5c46a8bb5fc7",
+    "AssoEchap/stalkerware-indicators": "426156175adc84af7fbdd41486c046f9ecb40436",
+    "citizenlab/malware-indicators": "7a7ae9278fa2c0252e9e40faed9b498d6a8d5248",
+    "mvt-project/mvt-indicators": "b22ddf05e1a31e7732b8895676987c5c3482ef65",
+}
+FEED_FILE_SHA256 = {
+    "amnesty-android-campaign-2023": "28da50042006281d56c17dff08f06bba3ba310bc18cc23040780850131b2efdb",
+    "amnesty-cytrox-2021": "6fe92193d9e17c21a16eb7abe93a418a2e40c0176dcb56fb30539f84136391bb",
+    "amnesty-finfisher-2020": "cc5d59d5f868984bae06df93989d95f49670d808dafbbefadd4bc0df0573b6de",
+    "amnesty-novispy-2024": "02bfceea5a2c32b159f11569736448398e35e7f0fc7d137385b943ec60697360",
+    "amnesty-nso-2018": "4e450de9219a6cb9a6888c352abb5e8b62fa33ebadd70238e5f69a5a08329579",
+    "amnesty-nso-morocco-2019": "29c183256cee9c04147e09bd50d29094f85a8b40dec500aa00ffcf02b368f63e",
+    "amnesty-pegasus-2021": "df1bcaa78abc7b85781b1ebc2daa3cc225371e2024d9ef96e84f80f927256586",
+    "amnesty-wintego-helios-2024": "d0d546c388207e8a162eb3901259ee20c0ddd03efeff145d3cc9b3a0a02a5419",
+    "citizenlab-cyberbit-2017": "3ca53475a3c96630b5c9fb42fba688b9123fcd21a236de41ef0f53ba419e70d1",
+    "citizenlab-kingdom-2018": "835b1a105a4f16b994013955bc41bfedc32eff56f586bf3faadea9888498c506",
+    "citizenlab-nso-2016": "7c005140f65b4043c7fad35a7c39ceeb51da5133810c2b0b4b57428f33a3ceed",
+    "citizenlab-nso-insider-2017": "87cd4cb85b4a3808ff231f6c22e79f387328ba1b36ab576b61b455562f8afbc2",
+    "citizenlab-nso-mexico-exploit-2017": "b260da1f4e1dd15cfc804be734431c602bb6abee00bf8c5cc4c4e41d3638280a",
+    "citizenlab-nso-mexico-redux-2017": "62d614e4f11a1652ef8020676269b9cfc85b6b0db36e45b43a4d397776387c5d",
+    "echap-stalkerware": "60307b49256d726a55e5b29e5243113021b26f2c91b492da4bcd2eb579739a98",
+    "mvt-btmob": "6bada3d46e6ac53019d80ccea991611125e8eefdd00b5bd0ea23ac48f2dca15a",
+    "mvt-candiru": "684f9e60da472ec938c7cd003adb3e3b97d29a0a43fed7565c9ef29c19bedb86",
+    "mvt-cellebrite": "054436c35a1e715ff2ea55a9516364108239cde238afdd096b21c3da90f97d2a",
+    "mvt-coruna": "653887014af347a107144036c9388af714f7a728661d6026dbe8b66db4acbfe4",
+    "mvt-darksword": "a694a8f3a37866ae30d72aab84fffd3a89d848406adfc0eac3237805b1c6826c",
+    "mvt-eaglemsgspy": "033af3e26f764ace084d8ed3cdb6eeba833b1d9d1f2708fd65289e12a45136b5",
+    "mvt-morpheus": "fa327338e33b017f8633a33ddc2a0364a1ecfa8fd99b821e53a5c2e4cdb33094",
+    "mvt-operation-triangulation": "320a3aa1147f7c87b92db46a6c977c75d721d74e8266978dc74d9ed2ca7383f5",
+    "mvt-predator": "99938ba179216f73e54513c4c537e3951ae860bcc6eaa5a93055f4afbb689879",
+    "mvt-quadream-kingspawn": "fd47acd30388738083fb1e4e09ce7f2032885ec1217a5edc75ef8e71a81fee3f",
+    "mvt-rcs-lab": "db7473900259bc28ef20145c315af5bcb99451715703bc78563338f656b213b2",
+    "mvt-residentbat": "d52ca6753a80578a25df2b907ae5dd3305b00e2345baa843d0c91dfac52c50c5",
+    "mvt-spyrtacus": "44a7f68629cfeb5952a646986f5ef24395656631d6cca636bf283c024714ad4e",
+    "mvt-wyrmspy-dragonegg": "b5495ca605b2150e76bb8322cfc6f484382db6070f806672f70edf3b0511e4f3",
+}
+# --- end of pinned revisions --------------------------------------------------
+
+
+def _pinned_url(src):
+    """The download URL at this release's pinned commit, or None."""
+    pin = FEED_PINS.get(src.get("repo", ""))
+    if not pin or not src.get("path"):
+        return None
+    return RAW + src["repo"] + "/" + pin + "/" + src["path"]
 
 
 # Snapshot of mvt-project/mvt-indicators/indicators.yaml (19 entries, read
@@ -345,9 +403,13 @@ def _write_manifest(cache: str, entries: Dict[str, Dict[str, object]]) -> None:
 def update(cache: Optional[str] = None, sources: Optional[List[Dict[str, str]]] = None,
            fetch: Callable[[str], bytes] = _fetch,
            emit: Callable[[str], None] = lambda s: None,
-           accept_shrink: Optional[List[str]] = None) -> Dict[str, object]:
+           accept_shrink: Optional[List[str]] = None,
+           latest: bool = False) -> Dict[str, object]:
     """Download every source; keep the previous copy of any that fails.
-    Returns a summary: per source ok / unchanged / failed, with counts."""
+    Returns a summary: per source ok / unchanged / failed, with counts.
+
+    By default a source is fetched at this release's pinned commit and must
+    match the SHA-256 recorded for it; `latest` follows the upstream branch."""
     cache = cache or default_cache_dir()
     problem = path_problem(os.path.abspath(cache))
     if problem:
@@ -357,13 +419,20 @@ def update(cache: Optional[str] = None, sources: Optional[List[Dict[str, str]]] 
     results = []
     for src in (sources if sources is not None else SOURCES):
         name = src["id"] + _EXT[src["format"]]
-        entry = {"id": src["id"], "name": src["name"], "url": src["url"]}
+        pinned = None if latest else _pinned_url(src)
+        url = pinned or src["url"]
+        expected = FEED_FILE_SHA256.get(src["id"]) if pinned else None
+        revision = FEED_PINS[src["repo"]] if pinned else ("branch head" if latest else "unpinned")
+        entry = {"id": src["id"], "name": src["name"], "url": url, "revision": revision}
         try:
             final = _feed_local_path(cache, name)
-            data = fetch(src["url"])
+            data = fetch(url)
             if _looks_like_html(data):
                 raise IocError("got a web page, not an indicator file")
             digest = _feed_sha256(data)
+            if expected and digest != expected:
+                raise IocError("the file at the pinned revision does not match the SHA-256 recorded "
+                               "in this release; the previous copy was kept")
             old = manifest.get(src["id"])
             checked = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).replace(microsecond=0).isoformat() + "Z"
             intact = False
@@ -375,6 +444,8 @@ def update(cache: Optional[str] = None, sources: Optional[List[Dict[str, str]]] 
                     pass
             if intact:
                 old["checked_utc"] = checked
+                old["revision"] = revision
+                old["url"] = url
                 entry.update(status="unchanged", indicators=old.get("indicators"))
                 results.append(entry)
                 emit("[=] {}: {} indicators, unchanged (sha256 {})".format(src["name"], old.get("indicators"), digest[:16]))
@@ -386,27 +457,35 @@ def update(cache: Optional[str] = None, sources: Optional[List[Dict[str, str]]] 
                 parsed = _load_source_file(src, tmp)    # parse BEFORE replacing
                 # A source that suddenly loses most of its indicators (a broken or
                 # tampered upstream file) must not silently make scans look clean:
-                # keep the previous copy and report why.
-                before = old.get("indicators") if isinstance(old, dict) else None
-                if type(before) is int and before > 0 and (
-                        len(parsed) == 0 or (before >= 20 and len(parsed) < before // 2)):
+                # keep the previous copy and report why. Measured against the
+                # highest count this cache has held, so repeated smaller drops
+                # cannot empty a source either. A file matching the hash this
+                # release recorded was reviewed, so it resets the measure.
+                counts = [old.get(k) for k in ("indicators", "peak_indicators")] if isinstance(old, dict) else []
+                peak = max([c for c in counts if type(c) is int], default=0)
+                reviewed = bool(expected)
+                if not reviewed and peak > 0 and (
+                        len(parsed) == 0 or (peak >= 20 and len(parsed) < peak // 2)):
                     if src["id"] not in (accept_shrink or ()):
-                        raise IocError("indicator count fell from {} to {}; the previous copy was kept. "
-                                       "Check the source; if the change is genuine, accept it with "
-                                       "--update --accept-shrink {}".format(before, len(parsed), src["id"]))
+                        raise IocError("indicator count fell from {} to {} (measured against the most this cache "
+                                       "has held); the previous copy was kept. Check the source; if the change is "
+                                       "genuine, accept it with --update --accept-shrink {}".format(
+                                           peak, len(parsed), src["id"]))
                     emit("[!] {}: indicator count fell from {} to {}; accepted as requested".format(
-                        src["name"], before, len(parsed)))
+                        src["name"], peak, len(parsed)))
+                    reviewed = True
+                peak = len(parsed) if reviewed else max(peak, len(parsed))
             except Exception:
                 os.unlink(tmp)
                 raise
             os.replace(tmp, final)
             manifest[src["id"]] = {
-                "file": name, "url": src["url"], "format": src["format"],
+                "file": name, "url": url, "revision": revision, "format": src["format"],
                 "name": src["name"], "cite": src["cite"], "category": src["category"],
                 "family": src.get("family", ""), "sha256": digest, "bytes": len(data),
                 "fetched_utc": datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None).replace(microsecond=0).isoformat() + "Z",
                 "checked_utc": checked,
-                "indicators": len(parsed)}
+                "indicators": len(parsed), "peak_indicators": peak}
             # Record each replaced file at once: an interrupted update then
             # leaves at most the source in progress out of step, and the next
             # --update re-downloads it.
@@ -466,6 +545,14 @@ def cached_sets(cache: Optional[str] = None) -> Tuple[List[IocSet], Dict[str, ob
         if _feed_sha256(data) != meta.get("sha256"):
             status["refused"].append({"id": sid, "reason": "file changed since download"})
             continue
+        # A copy recorded as this release's pinned revision must also match the
+        # hash the release itself carries, which the cache cannot rewrite.
+        pinned_here = meta.get("revision") == FEED_PINS.get(src.get("repo", ""), None)
+        expected = FEED_FILE_SHA256.get(sid) if pinned_here else None
+        if expected and _feed_sha256(data) != expected:
+            status["refused"].append({"id": sid, "reason": "file does not match the copy pinned "
+                                                           "for this release"})
+            continue
         try:
             loaded = _load_source_file(src, path)
             refreshed = meta.get("checked_utc") or meta.get("fetched_utc")
@@ -478,6 +565,8 @@ def cached_sets(cache: Optional[str] = None) -> Tuple[List[IocSet], Dict[str, ob
                 loaded.verified_at = None
             sets.append(loaded)
             status["loaded"].append({"id": sid, "fetched_utc": meta.get("fetched_utc"),
+                                     "revision": meta.get("revision") or "unrecorded",
+                                     "pinned_for_this_release": pinned_here,
                                      "checked_utc": meta.get("checked_utc"),
                                      "age_days": loaded.age_days(),
                                      "freshness_unknown": loaded.has_unknown_age(),
@@ -489,7 +578,7 @@ def cached_sets(cache: Optional[str] = None) -> Tuple[List[IocSet], Dict[str, ob
 
 
 def update_command(cache: Optional[str], json_path: Optional[str],
-                   accept_shrink: Optional[List[str]] = None) -> int:
+                   accept_shrink: Optional[List[str]] = None, latest: bool = False) -> int:
     """The `--update` command for both entry points (source CLI and single
     file). Prints a short summary; exit 0 only if every source succeeded."""
     from .report import write_json, _report_console
@@ -501,6 +590,8 @@ def update_command(cache: Optional[str], json_path: Optional[str],
             raise IocError("--accept-shrink: unknown source id {}; the ids are listed in "
                            "manifest.json in the indicator cache".format(", ".join(unknown)))
         extra = {"accept_shrink": accept_shrink} if accept_shrink else {}
+        if latest:
+            extra["latest"] = True
         summary = update(cache, emit=lambda s: _report_console(s, sys.stderr), **extra)
     except IocError as exc:
         _report_console("error: {}".format(exc), sys.stderr)

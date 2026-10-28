@@ -7,8 +7,10 @@ paths here. This is not a sandbox against concurrent filesystem changes.
 
 import os
 import posixpath
+import shutil
 import stat
 import sys
+import time
 
 
 def local_temp_dir():
@@ -64,6 +66,12 @@ def path_problem(path):
             return ""  # caller handles a genuinely absent artifact
         except OSError as exc:
             return "cannot safely inspect {}: {}".format(current, exc)
+        if cloud_placeholder(info):
+            # A OneDrive (or other cloud-files) folder: it redirects nowhere,
+            # so it is read in place unless reading would download it.
+            if getattr(info, "st_file_attributes", 0) & _CLOUD_ONLY_ATTRIBUTES:
+                return "{} is stored only in OneDrive or iCloud and was not downloaded".format(current)
+            continue
         if (stat.S_ISLNK(info.st_mode)
                 or getattr(info, "st_file_attributes", 0) & 0x400):
             # macOS exposes its standard /var, /tmp and /etc directories through
@@ -105,6 +113,91 @@ _CLOUD_ONLY_ATTRIBUTES = 0x00400000 | 0x00040000 | 0x00001000
 # listing one makes macOS download it first, which can stall a scan for hours.
 SF_DATALESS = 0x40000000
 
+# Windows cloud-files placeholders (OneDrive, iCloud for Windows and other sync
+# clients) carry an IO_REPARSE_TAG_CLOUD_* tag: 0x9000001A with any of the 16
+# sub-type values in bits 12-15. Unlike a link or junction, the tag does not
+# redirect anywhere: the file or folder is read where it is. Whether reading
+# would download it is told by the recall and offline attributes above.
+_CLOUD_TAG_MASK = 0xFFFF0FFF
+_CLOUD_TAG = 0x9000001A
+
+
+def cloud_placeholder(info):
+    """True for a Windows cloud-files placeholder (see _CLOUD_TAG)."""
+    return bool(getattr(info, "st_file_attributes", 0) & 0x400) and (
+        getattr(info, "st_reparse_tag", 0) & _CLOUD_TAG_MASK) == _CLOUD_TAG
+
+
+# Folders a scan creates in the temporary directory. They hold private copies
+# (decrypted iPhone databases, browser databases with cookie values, indicator
+# files) and are removed when a scan ends, but a crash, a hard kill or a power
+# cut leaves them behind.
+STALE_TEMP_PREFIXES = ("zbt_ios_", "bscan_", "adint_ioc_", "zbt_ioc2_")
+STALE_TEMP_AGE = 12 * 3600
+
+
+def sweep_stale_temp(max_age=STALE_TEMP_AGE, now=None, base=None):
+    """Remove this tool's temporary folders left by an earlier scan that did
+    not finish. Only plain folders with the tool's prefixes, owned by this user
+    (on Windows the temporary directory is already per user), and untouched for
+    max_age seconds, so a scan running at the same time is never disturbed.
+    Returns {"removed": count, "failed": [paths that are still there]}."""
+    out = {"removed": 0, "failed": []}
+    try:
+        base = base or local_temp_dir()
+        entries = list(os.scandir(base))
+    except OSError:
+        return out
+    now = time.time() if now is None else now
+    for entry in entries:
+        if not entry.name.startswith(STALE_TEMP_PREFIXES):
+            continue
+        try:
+            info = entry.stat(follow_symlinks=False)
+        except OSError:
+            continue
+        if (not stat.S_ISDIR(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400
+                or (hasattr(os, "getuid") and info.st_uid != os.getuid())
+                or now - info.st_mtime < max_age):
+            continue
+        shutil.rmtree(entry.path, ignore_errors=True)
+        if os.path.lexists(entry.path):
+            out["failed"].append(entry.path)
+        else:
+            out["removed"] += 1
+    return out
+
+
+def synced_folder(path):
+    """The cloud-synced folder `path` lies in (OneDrive, iCloud Drive, or a
+    macOS CloudStorage provider), or "". Lexical, plus an lstat of each
+    ancestor on Windows to recognise OneDrive placeholder folders; nothing is
+    opened or downloaded."""
+    full = os.path.normcase(os.path.abspath(path))
+    roots = [os.environ.get(key, "") for key in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial")]
+    home = os.path.expanduser("~")
+    roots += [os.path.join(home, "Library", "Mobile Documents"),
+              os.path.join(home, "Library", "CloudStorage")]
+    for root in roots:
+        if not root:
+            continue
+        norm = os.path.normcase(os.path.abspath(root)).rstrip("\\/")
+        if full == norm or full.startswith(norm + os.sep):
+            return root
+    if sys.platform == "win32":
+        current = os.path.dirname(os.path.abspath(path))
+        while True:
+            try:
+                if cloud_placeholder(os.lstat(current)):
+                    return current
+            except OSError:
+                pass
+            parent = os.path.dirname(current)
+            if parent == current:
+                return ""
+            current = parent
+    return ""
+
 
 def walk_local(root, onerror=None):
     """Top-down os.walk equivalent that never classifies a link by following it.
@@ -129,7 +222,8 @@ def walk_local(root, onerror=None):
                         attributes = getattr(info, "st_file_attributes", 0)
                         if attributes & 0x400 and attributes & _CLOUD_ONLY_ATTRIBUTES:
                             raise PermissionError(13, WALK_CLOUD_SKIPPED, entry.path)
-                        if stat.S_ISLNK(info.st_mode) or attributes & 0x400:
+                        if stat.S_ISLNK(info.st_mode) or (attributes & 0x400 and
+                                                          not cloud_placeholder(info)):
                             raise PermissionError(13, WALK_LINK_REFUSED, entry.path)
                         if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
                             raise PermissionError(13, WALK_SPECIAL_REFUSED, entry.path)

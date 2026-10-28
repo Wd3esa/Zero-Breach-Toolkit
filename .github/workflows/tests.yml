@@ -64,6 +64,10 @@ jobs:
             python tools/release_check.py --e2e-only --output-dir gate-out
           fi
 
+      - name: Generated files match the sources
+        if: matrix.os == 'ubuntu-latest'
+        run: python build/build.py --check
+
       - name: Single-file build is reproducible
         run: |
           python build/bundle.py . first.py

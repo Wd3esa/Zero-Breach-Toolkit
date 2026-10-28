@@ -110,6 +110,33 @@ SOURCE_EXPECTATIONS = {'amnesty-candiru-indonesia-2024': ('Amnesty International
                             'https://www.recordedfuture.com/research/tracking-candirus-devilstongue-spyware')}
 
 
+# Historical names that registry (RDAP) records showed registered again after
+# their report (check of 2026-10-28): filed as reclaimable, not historical.
+REREGISTERED = {
+    'amnestyreports.com',
+    'armradio.org',
+    'bootstrapcdn.net',
+    'core-update.com',
+    'cortana.cloud',
+    'cuturl.app',
+    'euro-news.online',
+    'expertglobal.org',
+    'gelora.org',
+    'hetq.org',
+    'hotjar.net',
+    'kidone.xyz',
+    'linkedin-jobs.com',
+    'piwiks.com',
+    'rebrandly.site',
+    'refugeeinternational.org',
+    'stat.email',
+    'static-doubleclick.net',
+    'tehrantimes.org',
+    'tinyurl.one',
+    'workaj.com',
+}
+
+
 class TestFeedCuration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -134,8 +161,9 @@ class TestFeedCuration(unittest.TestCase):
                     self.assertIsNotNone(ind)
                     self.assertEqual(ind.source, source)
                     self.assertEqual(ind.type, iocs.TYPE_DOMAIN)
-                    self.assertEqual(ind.tier, 'delivery' if source ==
-                                     'confiant-adint-2026' else 'historical')
+                    expected = ('delivery' if source == 'confiant-adint-2026' else
+                                'reclaimable' if name in REREGISTERED else 'historical')
+                    self.assertEqual(ind.tier, expected)
         for held in ('oiip.org', 'vfsglobal.fr', 'tekma-dmp.ai', 'webfx.cc',
                      'engagebay.cc', 'dl.nmcyclingexperience.com',
                      'supportcdn.web.app', 'vegmobile.com', 'cloudflare-dns.com',
@@ -176,7 +204,9 @@ class TestFeedCuration(unittest.TestCase):
                 self.assertEqual(plain, {x.split()[1] for x in body('adfection.hosts.txt')})
                 self.assertEqual(plain, {x[2:-1] for x in body('adfection.adblock.txt')})
                 self.assertEqual(plain, {x.split('/')[1] for x in body('adfection.dnsmasq.conf')})
-                self.assertEqual(len(plain), 161 if omit else 291)
+                # The two shared-platform hostnames and the re-registered
+                # historical names are reclaimable, exported only with history.
+                self.assertEqual(len(plain), 159 if omit else 291)
                 self.assertNotIn('adtimizer.co', plain)
                 self.assertTrue(plain.isdisjoint(i.value for i in self.data.ips + self.data.hashes))
                 for source, names in ADDITIONS.items():
