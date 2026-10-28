@@ -209,6 +209,38 @@ def _phone_age_envelope(path):
     raise ValueError("age header missing or exceeds the read limit")
 
 
+# AndroidQF unpacks its own adb into "the executable's directory", which its
+# helper computes with a '/'-only path function: on Windows that is the current
+# directory (here the collection folder), while the fallback that looks for adb
+# uses the real executable folder. The collection folder therefore has to be on
+# PATH on Windows. The same helper locates key.txt, so on macOS and Linux the
+# recipient file must sit beside the executable as well.
+_PHONE_ADB_FILES = ("adb.exe", "AdbWinApi.dll", "AdbWinUsbApi.dll")
+
+
+def _phone_finish_adb(environment, *folders):
+    """Stop the adb server AndroidQF leaves running and remove the adb files it
+    unpacked into the collection folder (the first folder given)."""
+    for folder in folders:
+        for name in ("adb.exe", "adb"):
+            adb = os.path.join(folder, name)
+            if os.path.isfile(adb) and not os.path.islink(adb):
+                try:
+                    subprocess.run([adb, "kill-server"], cwd=folder, env=environment, shell=False,
+                                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.DEVNULL, timeout=20)
+                except (OSError, subprocess.SubprocessError):
+                    pass
+                break
+    for name in _PHONE_ADB_FILES:
+        path = os.path.join(folders[0], name)
+        try:
+            if os.path.isfile(path) and not os.path.islink(path):
+                os.remove(path)
+        except OSError:
+            pass        # still in use: harmless tool files, never evidence
+
+
 def collect_android(destination, recipient_file=None):
     """Return (plaintext collection folder or None, command exit code)."""
     if not sys.stdin.isatty():
@@ -259,13 +291,20 @@ def collect_android(destination, recipient_file=None):
             exe = os.path.join(binaries, "androidqf.exe" if sys.platform == "win32" else "androidqf")
             print("Downloading pinned official collector...")
             _phone_download(asset, digest, exe)
+            if recipient:
+                with open(os.path.join(binaries, "key.txt"), "xb") as fh:
+                    fh.write(recipient)
             environment = dict(os.environ)
             for name in list(environment):
                 if name.startswith(("ADB_", "ANDROID_ADB_", "LD_", "DYLD_")):
                     environment.pop(name, None)
-            environment["PATH"] = (os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+            environment["PATH"] = (work + os.pathsep +
+                                   os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
                                    if sys.platform == "win32" else os.defpath)
-            completed = subprocess.run([exe, "-output", work], cwd=work, env=environment, shell=False)
+            try:
+                completed = subprocess.run([exe, "-output", work], cwd=work, env=environment, shell=False)
+            finally:
+                _phone_finish_adb(environment, work, binaries)
             if completed.returncode:
                 raise ValueError("AndroidQF did not complete successfully; any partial acquisition remains in " + work)
         archives = [os.path.join(work, name) for name in os.listdir(work) if name.endswith((".zip", ".zip.age"))]
@@ -276,6 +315,7 @@ def collect_android(destination, recipient_file=None):
         if archives[0].endswith(".age"):
             _phone_age_envelope(archives[0])
             allowed = {os.path.abspath(archives[0]), os.path.join(work, "key.txt")}
+            allowed |= {os.path.join(work, name) for name in _PHONE_ADB_FILES}
             def refused(exc):
                 raise OSError("cannot verify acquisition output contents")
             for folder, dirs, files in walk_local(work, onerror=refused):

@@ -3,6 +3,11 @@
 ## 0.1.7 (2026-10-28)
 
 Android
+- Windows: the guided Android collection works again. AndroidQF unpacks its own adb into
+  the collection folder and then could not find it ("Impossible to find ADB"); that folder
+  is now on its search path. Afterwards the adb server is stopped and the unpacked adb files
+  are removed. On macOS and Linux, an encrypted collection now reaches the collector (the
+  recipient file was placed where AndroidQF does not look).
 - Pixel phones no longer show eight false monitoring-app matches. A Google feature flag
   lists hundreds of apps the notification features skip, family-safety apps among them;
   server-pushed feature flags (`dumpsys device_config` and the CONFIG table of `dumpsys
